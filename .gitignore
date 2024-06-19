@@ -1,3 +1,6 @@
+# Ignore batch files
+*.pbs
+
 # Ignore DVGeo demo files
 geometry/DVGeoDemo
 
