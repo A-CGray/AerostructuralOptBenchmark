@@ -204,10 +204,10 @@ def whereAmIRunning():
 def getOutputDir():
     machineName = whereAmIRunning()
     parentDirs = {
-        "albert": "/home/ali/BigBoi/ali/2023-GeomNonlinMPhysPaper/JournalPaper/Local",
-        "greatlakes": "/scratch/jrram_root/jrram1/alachris/2023-GeomNonlinMPhysPaper/JournalPaper",
-        "stampede": "/work2/07488/acgray/stampede2/2023-GeomNonlinMPhysPaper/JournalPaper",
-        "hecc": "/nobackup/achris10",
+        "albert": "/home/ali/BigBoi/ali/AerostructuralOptBenchmark",
+        "greatlakes": "/scratch/jrram_root/jrram1/alachris/AerostructuralOptBenchmark",
+        "stampede": "/work2/07488/acgray/stampede2/AerostructuralOptBenchmark",
+        "hecc": "/nobackup/achris10/AerostructuralOptBenchmark",
     }
     if machineName in parentDirs:
         return parentDirs[machineName]
