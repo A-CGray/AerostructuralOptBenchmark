@@ -58,7 +58,7 @@ flightPoint.addDV("alpha", value=flightPoint.alpha, lower=0, upper=10.0, scale=0
 if args.task == "analysis":
     alphas = [flightPoint.alpha]
 elif args.task == "polar":
-    alphas = list(np.linspace(0, 5, 6))
+    alphas = list(np.linspace(0, 5, 21))
 
 cl = []
 cd = []
