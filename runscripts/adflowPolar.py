@@ -1,13 +1,33 @@
-import numpy as np
+"""
+==============================================================================
+ADflow baseline polar
+==============================================================================
+@File    :   adflowPolar.py
+@Date    :   2024/06/19
+@Author  :   Alasdair Christison Gray
+@Description : This script uses ADflow to run an aerodynamic polar on the rigid
+baseline geometry as specified in the problem description document
+"""
+
+# ==============================================================================
+# Standard Python modules
+# ==============================================================================
 import argparse
 import os
+
+# ==============================================================================
+# External Python modules
+# ==============================================================================
+import numpy as np
+import dill
 from adflow import ADFLOW
-from baseclasses import AeroProblem
 from mpi4py import MPI
-from pprint import pprint
-import pickle
+
+# ==============================================================================
+# Extension modules
+# ==============================================================================
 from SETUP.setupADflow import getADflowOptions
-from utils import getAeroMeshPath, whereAmIRunning, getGeometryData, getFlightPointSet
+from utils import getAeroMeshPath, getOutputDir, getGeometryData, getFlightPointSet
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output", type=str, default="debug")
@@ -18,17 +38,7 @@ args = parser.parse_args()
 comm = MPI.COMM_WORLD
 
 # --- Figure out where to put the results ---
-machineName = whereAmIRunning()
-parentDirs = {
-    "albert": "/home/ali/BigBoi/ali/AerostructuralOptBenchmark",
-    "greatlakes": "/scratch/jrram_root/jrram1/alachris/AerostructuralOptBenchmark",
-    "stampede": "/work2/07488/acgray/stampede2/AerostructuralOptBenchmark",
-}
-if machineName in parentDirs:
-    OUTPUT_PARENT_DIR = parentDirs[machineName]
-else:
-    OUTPUT_PARENT_DIR = "Output"
-outputDir = os.path.join(OUTPUT_PARENT_DIR, args.output)
+outputDir = os.path.join(getOutputDir(), args.output)
 
 if comm.rank == 0:
     os.makedirs(outputDir, exist_ok=True)
@@ -65,13 +75,17 @@ for ii, alpha in enumerate(alphas):
 
     hist = CFDSolver.getConvergenceHistory()
     with open(os.path.join(outputDir, f"history_{ii:03d}.pkl"), "wb") as file:
-        pickle.dump(hist, file)
+        dill.dump(hist, file)
 
     # --- Compute functions ---
-    funcs = {}
+    funcs: dict = {}
     CFDSolver.evalFunctions(flightPoint, funcs, evalFuncs=["cl", "cd"])
     cl.append(funcs[f"{flightPoint.name}_cl"])
     cd.append(funcs[f"{flightPoint.name}_cd"])
+
+data = {"alpha": alphas, "cl": cl, "cd": cd}
+with open(os.path.join(outputDir, "polarData.pkl"), "wb") as file:
+    dill.dump(data, file)
 
 if comm.rank == 0:
     print("\n\nPolar Results:")

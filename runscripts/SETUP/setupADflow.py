@@ -34,7 +34,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "MGCycle": "sg",
         "MGStartLevel": -1,
         "nCyclesCoarse": 250,
-        "rkReset": False,  # args.task == "derivCheck",
+        "rkReset": True,  # args.task == "derivCheck",
         "nRKReset": 5,
         "infchangecorrection": True,
         "useBlockettes": True,

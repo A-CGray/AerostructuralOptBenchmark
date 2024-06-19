@@ -1,13 +1,14 @@
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
-import dill
+import re
 import os
 import sys
 
 # ==============================================================================
 # External Python modules
 # ==============================================================================
+import dill
 import openmdao.api as om
 from mpi4py import MPI
 import reverse_argparse
@@ -109,7 +110,8 @@ def saveRunCommand(parser, args, outputDir):
             f.write(command)
 
 
-def setValsFromFiles(files, prob, model):
+def setValsFromFiles(files, prob):
+    model = prob.model
     if prob.comm.rank == 0:
         print("\n===============================================================================")
     for fileName in files:
@@ -125,6 +127,8 @@ def setValsFromFiles(files, prob, model):
             hist = History(fileName)
             data = hist.getValues()
             old_design_vars = {key: data[key][-1] for key in data}
+        else:
+            raise ValueError("Unrecognised file type, setValsFromFiles only works with .sql, .pkl or .hst files")
         for dv in model.get_design_vars():
             try:
                 prob.set_val(dv, old_design_vars[dv])
@@ -183,9 +187,9 @@ def whereAmIRunning():
     Returns
     -------
     str
-        "albert" if running on my machine Albert, "greatlakes" if running on Great Lakes, "stampede" if running on
-        Stampede2, "nas" if running on the NAS
+        "albert" if running on my machine Albert, "greatlakes" if running on Great Lakes, "stampede" if running on Stampede2
     """
+    NASNodePattern = "r[0-9]{1,3}i[0-9]n[0-9]{1,3}$"
     uname = os.uname()[1]
     if uname.lower() == "albert":
         return "albert"
@@ -193,5 +197,19 @@ def whereAmIRunning():
         return "greatlakes"
     elif "stampede2.tacc.utexas.edu" in uname:
         return "stampede"
-    elif "pfe" in uname:
-        return "nas"
+    elif "pfe" in uname or len(re.findall(NASNodePattern, uname)) > 0:
+        return "hecc"
+
+
+def getOutputDir():
+    machineName = whereAmIRunning()
+    parentDirs = {
+        "albert": "/home/ali/BigBoi/ali/2023-GeomNonlinMPhysPaper/JournalPaper/Local",
+        "greatlakes": "/scratch/jrram_root/jrram1/alachris/2023-GeomNonlinMPhysPaper/JournalPaper",
+        "stampede": "/work2/07488/acgray/stampede2/2023-GeomNonlinMPhysPaper/JournalPaper",
+        "hecc": "/nobackup/achris10",
+    }
+    if machineName in parentDirs:
+        return parentDirs[machineName]
+    else:
+        return "Output"
