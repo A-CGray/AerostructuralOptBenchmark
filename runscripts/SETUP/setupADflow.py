@@ -11,7 +11,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # I/O Parameters
         "gridFile": meshFile,
         "outputDirectory": outputDir,
-        "monitorvariables": ["cpu", "resrho", "resmom", "resturb", "cl", "cd", "yplus"],
+        "monitorvariables": ["cpu", "resrho", "resmom", "resturb", "cl", "cd", "yplus", "sepsensor"],
         "surfaceVariables": ["cp", "vx", "vy", "vz", "mach", "yplus", "cf", "cfx"],
         "isosurface": {"vx": -0.001, "shock": 1.0},
         "writeTecplotSurfaceSolution": True,
@@ -37,6 +37,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "rkReset": True,  # args.task == "derivCheck",
         "nRKReset": 5,
         "infchangecorrection": True,
+        "infChangeCorrectionType": "rotate",
         "useBlockettes": True,
         # ANK Solver Parameters
         "useANKSolver": True,
