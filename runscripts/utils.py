@@ -19,11 +19,11 @@ from pyoptsparse import History
 # ==============================================================================
 THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(THIS_FILE_DIR, "../AircraftSpecs"))
-from STWFlightPoints import flightPointSets
-from STWSpecs import aircraftSpecs
+from STWFlightPoints import flightPointSets  # noqa: E402
+from STWSpecs import aircraftSpecs  # noqa: E402
 
 sys.path.append(os.path.join(THIS_FILE_DIR, "../geometry"))
-from wingGeometry import wingGeometry
+from wingGeometry import wingGeometry  # noqa: E402
 
 
 def getGeometryData():
@@ -44,6 +44,10 @@ def getAeroMeshPath(level: int) -> str:
 
 def getStructMeshPath(level: int, order: int) -> str:
     return os.path.join(THIS_FILE_DIR, f"../struct/wingbox-L{level}-Order{order}.bdf")
+
+
+def getFFDPath(level: str):
+    return os.path.join(THIS_FILE_DIR, f"../geometry/wing-ffd-advanced-{level}.xyz")
 
 
 def buildStructDVDictMap(assembler):
