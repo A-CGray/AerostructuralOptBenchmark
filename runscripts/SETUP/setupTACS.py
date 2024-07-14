@@ -13,6 +13,7 @@ Structural setup functions
 # ==============================================================================
 import os
 import sys
+from typing import Iterable
 
 # ==============================================================================
 # External Python modules
@@ -115,7 +116,7 @@ TESparDirection = TESparCoords[2] - TESparCoords[1]
 TESparDirection /= np.linalg.norm(TESparDirection)
 
 
-def computeDVNums(dvNum, usePanelLengthDVs, usePlyFractionDVs, numPlies):
+def computeDVNums(dvNum, usePanelLengthDVs, usePlyFractionDVs, useStiffenerPitchDVs, numPlies):
     dvNums = {}
     currDVNum = dvNum
     if usePanelLengthDVs:
@@ -124,8 +125,11 @@ def computeDVNums(dvNum, usePanelLengthDVs, usePlyFractionDVs, numPlies):
     else:
         dvNums["panelLength"] = -1
 
-    dvNums["stiffenerPitch"] = currDVNum
-    currDVNum += 1
+    if useStiffenerPitchDVs:
+        dvNums["stiffenerPitch"] = currDVNum
+        currDVNum += 1
+    else:
+        dvNums["stiffenerPitch"] = -1
 
     dvNums["panelThickness"] = currDVNum
     currDVNum += 1
@@ -151,11 +155,12 @@ def computeDVNums(dvNum, usePanelLengthDVs, usePlyFractionDVs, numPlies):
     return dvNums
 
 
-def computeDVScales(usePanelLengthDVs, usePlyFractionDVs, numPlies):
+def computeDVScales(usePanelLengthDVs, usePlyFractionDVs, useStiffenerPitchDVs, numPlies):
     DVScales = []
     if usePanelLengthDVs:
         DVScales.append(panelLengthScale)
-    DVScales.append(defaultStiffenerPitchScale)
+    if useStiffenerPitchDVs:
+        DVScales.append(defaultStiffenerPitchScale)
     DVScales.append(defaultPanelThicknessScale)
     if usePlyFractionDVs:
         DVScales += [defaultPlyFractionScale] * numPlies
@@ -178,6 +183,8 @@ def element_callback(
     useComposite,
     usePanelLengthDVs,
     usePlyFractionDVs,
+    useStiffenerPitchDVs,
+    panelLengths=None,
     **kwargs,
 ):
     if args.oldSizingRules:
@@ -248,6 +255,8 @@ def element_callback(
         refAxis = np.array([0.0, 0.0, 0.0])
         refAxis[verticalIndex] = 1.0
         panelLength = 0.5  # This is a conservative estimate of the panel length for the ribs and spars, based on the depth of the leading edge spar at the wing root
+    if panelLengths is not None:
+        panelLength = panelLengths[compDescript]
 
     currDVNum = dvNum
     DVScales = []
@@ -258,26 +267,31 @@ def element_callback(
     else:
         panelLengthNum = -1
 
-    if "RIB" in compDescript:
-        stiffenerPitchNum = currDVNum
-        stiffenerPitch = defaultStiffenerPitch
-        stiffenerPitchMax = defaultStiffenerPitchMax
-        DVScales.append(defaultStiffenerPitchScale)
-        currDVNum += 1
-    else:
-        if "SPAR.00" in compDescript:
-            pitchVarName = "le_spar_stiffenerPitch"
-        elif "SPAR.01" in compDescript:
-            pitchVarName = "te_spar_stiffenerPitch"
-        elif "U_SKIN" in compDescript:
-            pitchVarName = "u_skin_stiffenerPitch"
-        elif "L_SKIN" in compDescript:
-            pitchVarName = "l_skin_stiffenerPitch"
+    if useStiffenerPitchDVs:
+        if "RIB" in compDescript:
+            stiffenerPitchNum = currDVNum
+            stiffenerPitch = defaultStiffenerPitch
+            stiffenerPitchMax = defaultStiffenerPitchMax
+            DVScales.append(defaultStiffenerPitchScale)
+            currDVNum += 1
+        else:
+            if "SPAR.00" in compDescript:
+                pitchVarName = "le_spar_stiffenerPitch"
+            elif "SPAR.01" in compDescript:
+                pitchVarName = "te_spar_stiffenerPitch"
+            elif "U_SKIN" in compDescript:
+                pitchVarName = "u_skin_stiffenerPitch"
+            elif "L_SKIN" in compDescript:
+                pitchVarName = "l_skin_stiffenerPitch"
 
-        stiffenerPitchNum = globalDVs[pitchVarName]["num"]
-        stiffenerPitch = globalDVs[pitchVarName]["value"]
-        stiffenerPitchMin = globalDVs[pitchVarName]["lowerBound"]
-        stiffenerPitchMax = globalDVs[pitchVarName]["upperBound"]
+            stiffenerPitchNum = globalDVs[pitchVarName]["num"]
+            stiffenerPitch = globalDVs[pitchVarName]["value"]
+            stiffenerPitchMin = globalDVs[pitchVarName]["lowerBound"]
+            stiffenerPitchMax = globalDVs[pitchVarName]["upperBound"]
+    else:
+        stiffenerPitchNum = -1
+        stiffenerPitch = defaultStiffenerPitch
+        stiffenerPitchMin = stiffenerPitchMax = defaultStiffenerPitch
 
     panelThicknessNum = currDVNum
     DVScales.append(defaultPanelThicknessScale)
@@ -361,18 +375,19 @@ def element_callback(
 
 def setup_tacs_assembler(fea_assembler, args):
     # Add global DVs for the skin and spar stiffener pitch
-    if args.oldSizingRules:
-        stiffenerPitchMin = 0.05
-    else:
-        stiffenerPitchMin = defaultStiffenerPitchMin
-    for stiffenerGroup in ["u_skin", "l_skin", "le_spar", "te_spar"]:
-        fea_assembler.addGlobalDV(
-            f"{stiffenerGroup}_stiffenerPitch",
-            defaultStiffenerPitch,
-            lower=stiffenerPitchMin,
-            upper=defaultStiffenerPitchMax,
-            scale=defaultStiffenerPitchScale,
-        )
+    if args.useStiffPitchDVs:
+        if args.oldSizingRules:
+            stiffenerPitchMin = 0.05
+        else:
+            stiffenerPitchMin = defaultStiffenerPitchMin
+        for stiffenerGroup in ["u_skin", "l_skin", "le_spar", "te_spar"]:
+            fea_assembler.addGlobalDV(
+                f"{stiffenerGroup}_stiffenerPitch",
+                defaultStiffenerPitch,
+                lower=stiffenerPitchMin,
+                upper=defaultStiffenerPitchMax,
+                scale=defaultStiffenerPitchScale,
+            )
 
 
 def problem_setup(
@@ -440,6 +455,7 @@ def problem_setup(
 def setupConstraints(scenario_name, fea_assembler, constraints, args):
     usePanelLengthDVs = args.usePanelLengthDVs
     usePlyFractionDVs = args.usePlyFractionDVs
+    useStiffenerPitchDVs = args.useStiffPitchDVs
     thicknessAdjCon = args.thicknessAdjCon
     heightAdjCon = args.heightAdjCon
     stiffAspectMax = args.stiffAspectMax
@@ -453,6 +469,7 @@ def setupConstraints(scenario_name, fea_assembler, constraints, args):
         0,
         usePanelLengthDVs=usePanelLengthDVs,
         usePlyFractionDVs=usePlyFractionDVs,
+        useStiffenerPitchDVs=args.useStiffPitchDVs,
         numPlies=4 if args.useComposite else 1,
     )
 
@@ -551,15 +568,71 @@ def setupConstraints(scenario_name, fea_assembler, constraints, args):
         )
         # Spacing between stiffeners should be greater than stiffener flange width to avoid overlapping stiffeners
         # flangeFraction*stiffenerHeight - stiffenerPitch <= 0
-        dvCon.addConstraint(
-            conName="stiffSpacingMin",
-            upper=0.0,
-            dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerPitch"]],
-            dvWeights=[flangeFraction, -1.0],
-        )
+        # NOTE: This constrain is actually not strictly right now necessary because the stiffener height upper bound and
+        # the stiffener pitch lower bound are both 0.15m so the constraint is always satisfied. However, I'm keeping it
+        # enabled for now in case the bounds change in the future.
+        if useStiffenerPitchDVs:
+            dvCon.addConstraint(
+                conName="stiffSpacingMin",
+                upper=0.0,
+                dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerPitch"]],
+                dvWeights=[flangeFraction, -1.0],
+            )
+        else:
+            dvCon.addConstraint(
+                conName="stiffSpacingMin",
+                upper=defaultStiffenerPitch,
+                dvIndices=[DVNums["stiffenerHeight"]],
+                dvWeights=[flangeFraction],
+            )
         constraints.append(dvCon)
 
     if usePanelLengthDVs:
         panelLengthCon = fea_assembler.createPanelLengthConstraint("PanelLengthCon")
         panelLengthCon.addConstraint("PanelLength", dvIndex=DVNums["panelLength"])
         constraints.append(panelLengthCon)
+
+
+def buildStructDVDictMap(assembler, args):
+    """Build a dictionary that contains the design variable numbers for each component
+
+    This function assumes that each component has 5 design variables:
+
+    - panel length
+    - stiffener pitch
+    - panel thickness
+    - stiffener height
+    - stiffener thickness
+
+    Parameters
+    ----------
+    assembler : pyTACS assembler
+        pyTACS assembler object for the problem
+
+    Returns
+    -------
+    dict[str, dict[str, int]]
+        A dictionary whose keys are component names and whose value is another dictionary with the keys being the design
+        variable names and the values being the design variable numbers
+    """
+    dvMap = {}
+    for ii in range(assembler.nComp):
+        compName = assembler.compDescripts[ii]
+        element = assembler.meshLoader.getElementObject(ii, 0)
+        dvNums = element.getDesignVarNums(0)
+        dvInds = computeDVNums(
+            0,
+            usePanelLengthDVs=args.usePanelLengthDVs,
+            usePlyFractionDVs=args.usePlyFractionDVs,
+            useStiffenerPitchDVs=args.useStiffPitchDVs,
+            numPlies=4 if args.useComposite else 1,
+        )
+        dvMap[compName] = {}
+        for dvName, dvNum in dvInds.items():
+            # Need to check if dvNum is an iterable
+            if isinstance(dvNum, Iterable):
+                dvMap[compName][dvName] = [dvNums[dvN] if dvN >= 0 else -1 for dvN in dvNum]
+            else:
+                dvMap[compName][dvName] = dvNums[dvNum] if dvNum >= 0 else -1
+
+    return dvMap

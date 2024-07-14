@@ -50,44 +50,6 @@ def getFFDPath(level: str):
     return os.path.join(THIS_FILE_DIR, f"../geometry/wing-ffd-advanced-{level}.xyz")
 
 
-def buildStructDVDictMap(assembler):
-    """Build a dictionary that contains the design variable numbers for each component
-
-    This function assumes that each component has 5 design variables:
-
-    - panel length
-    - stiffener pitch
-    - panel thickness
-    - stiffener height
-    - stiffener thickness
-
-    Parameters
-    ----------
-    assembler : pyTACS assembler
-        pyTACS assembler object for the problem
-
-    Returns
-    -------
-    dict[str, dict[str, int]]
-        A dictionary whose keys are component names and whose value is another dictionary with the keys being the design
-        variable names and the values being the design variable numbers
-    """
-    dvMap = {}
-    for ii in range(assembler.nComp):
-        compName = assembler.compDescripts[ii]
-        element = assembler.meshLoader.getElementObject(ii, 0)
-        dvNums = element.getDesignVarNums(0)
-        dvMap[compName] = {
-            "panel length": dvNums[0],
-            "stiffener pitch": dvNums[1],
-            "panel thickness": dvNums[2],
-            "stiffener height": dvNums[3],
-            "stiffener thickness": dvNums[4],
-        }
-
-    return dvMap
-
-
 def saveRunCommand(parser, args, outputDir):
     """Save the command used to run this script in the output directory
 

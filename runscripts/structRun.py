@@ -36,7 +36,14 @@ import SETUP.setupTACS as setupTACS
 from OptimiserOptions import getOptOptions
 from CommonArgs import parser
 
-from utils import getOutputDir, setValsFromFiles, writeOutputs, saveRunCommand, getStructMeshPath, getFFDPath
+from utils import (
+    getOutputDir,
+    setValsFromFiles,
+    writeOutputs,
+    saveRunCommand,
+    getStructMeshPath,
+    getFFDPath,
+)
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AircraftSpecs"))
 from STWFlightPoints import flightPointSets  # noqa: E402
@@ -78,9 +85,11 @@ if args.task == "derivCheck":
 
 # --- Figure out where to put the results ---
 outputDir = os.path.join(getOutputDir(), args.output)
+resultsDir = os.path.join(outputDir, "Results")
 
 # Create output directories
 os.makedirs(outputDir, exist_ok=True)
+os.makedirs(resultsDir, exist_ok=True)
 
 # Print out the full list of command line arguments
 saveRunCommand(parser, args, outputDir)
@@ -93,6 +102,11 @@ ffdFile = getFFDPath(level=args.ffdLevel)
 flightPoints = flightPointSets[args.flightPointSet]
 flightPointsDict = {fp.name: fp for fp in flightPoints}
 
+# Read in panel lengths, they're stored in a csv file along with the struct meshes
+panelLengthFileName = os.path.join(os.path.dirname(structMeshFile), "PanelLengths.csv")
+with open(panelLengthFileName, "r") as panelLengthFile:
+    panelLengths = {line.split(",")[0]: float(line.split(",")[1]) for line in panelLengthFile}
+
 
 class Top(Multipoint):
     def setup(self):
@@ -100,7 +114,7 @@ class Top(Multipoint):
         # TACS options
         ################################################################################
         problemOptions = {
-            "outputDir": outputDir,
+            "outputDir": resultsDir,
             "useMonitor": not args.nonlinear,
             "monitorFrequency": 1,
             "L2convergence": 1e-20,
@@ -158,6 +172,8 @@ class Top(Multipoint):
                 useComposite=args.useComposite,
                 usePanelLengthDVs=args.usePanelLengthDVs,
                 usePlyFractionDVs=args.usePlyFractionDVs,
+                useStiffenerPitchDVs=args.useStiffPitchDVs,
+                panelLengths=panelLengths,
                 **kwargs,
             )
 
@@ -169,7 +185,7 @@ class Top(Multipoint):
         for ii, flightPoint in enumerate(flightPoints):
             scenarioName = flightPoint.name
 
-            tacs_builder = TacsBuilder(
+            struct_builder = TacsBuilder(
                 mesh_file=structMeshFile,
                 assembler_setup=setup_assembler,
                 element_callback=element_callback,
@@ -178,7 +194,11 @@ class Top(Multipoint):
                 coupled=False,
                 write_solution=not args.noFiles,
             )
-            tacs_builder.initialize(self.comm)
+            struct_builder.initialize(self.comm)
+            structDVMap = setupTACS.buildStructDVDictMap(struct_builder.get_fea_assembler(), args)
+            if rank == 0:
+                with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
+                    dill.dump(structDVMap, structDVMapFile)
 
             ################################################################################
             # MPHYS setup
@@ -187,16 +207,16 @@ class Top(Multipoint):
                 # ivc to keep the top level DVs
                 dvSys = self.add_subsystem("dvs", om.IndepVarComp(), promotes=["*"])
                 # add the structural DVs
-                init_dvs = tacs_builder.get_initial_dvs()
+                init_dvs = struct_builder.get_initial_dvs()
                 dvSys.add_output("dv_struct", init_dvs)
                 if args.addStructDVs:
-                    lb, ub = tacs_builder.get_dv_bounds()
-                    structDVScaling = np.array(tacs_builder.fea_assembler.scaleList)
+                    lb, ub = struct_builder.get_dv_bounds()
+                    structDVScaling = np.array(struct_builder.fea_assembler.scaleList)
                     self.add_design_var(
                         "dv_struct", lower=lb, upper=ub, scaler=structDVScaling * args.structScalingFactor
                     )
 
-                self.add_subsystem("mesh", tacs_builder.get_mesh_coordinate_subsystem())
+                self.add_subsystem("mesh", struct_builder.get_mesh_coordinate_subsystem())
 
                 # Create the geometry component, we dont need a builder because we do it here.
                 geometrySys = self.add_subsystem(
@@ -209,7 +229,7 @@ class Top(Multipoint):
                 self.connect("mesh.x_struct0", "geometry.x_struct_in")
 
             # this is the method that needs to be called for every point in this mp_group
-            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=tacs_builder))
+            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=struct_builder))
             self.mphys_connect_scenario_coordinate_source(
                 "geometry", scenarioName, "struct"
             )  # This is equivalent to `self.connect("geometry.x_struct0", f"{scenarioName}.x_struct0")`
