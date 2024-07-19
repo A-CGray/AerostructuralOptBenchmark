@@ -243,7 +243,7 @@ def element_callback(
     # ==============================================================================
     # Figure out the reference axis and panel length
     if "SKIN" in compDescript:
-        isInboard = any([name in compDescript for name in ["SKIN.00", "SKIN.01", "SKIN.02"]])
+        isInboard = any([name in compDescript for name in ["SKIN.000", "SKIN.001", "SKIN.002"]])
         if isInboard:
             refAxis = np.array([0.0, 0.0, 0.0])
             refAxis[spanIndex] = 1.0
