@@ -2,7 +2,7 @@
 ==============================================================================
 Structural runscript
 ==============================================================================
-@File    :   mphys_struct.py
+@File    :   structRun.py
 @Date    :   2023/03/31
 @Author  :   Alasdair Christison Gray
 @Description :
@@ -47,6 +47,12 @@ from utils import (
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AircraftSpecs"))
 from STWFlightPoints import flightPointSets  # noqa: E402
+
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geomerty"))
+from wingGeometry import wingGeometry  # noqa: E402
+
+verticalIndex = wingGeometry["verticalIndex"]
+chordIndex = wingGeometry["chordIndex"]
 
 # set these for convenience
 comm = MPI.COMM_WORLD
@@ -195,7 +201,8 @@ class Top(Multipoint):
                 write_solution=not args.noFiles,
             )
             struct_builder.initialize(self.comm)
-            structDVMap = setupTACS.buildStructDVDictMap(struct_builder.get_fea_assembler(), args)
+            self.FEAAssembler = struct_builder.get_fea_assembler()
+            structDVMap = setupTACS.buildStructDVDictMap(self.FEAAssembler, args)
             if rank == 0:
                 with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
                     dill.dump(structDVMap, structDVMapFile)
@@ -411,3 +418,73 @@ elif args.task == "opt":
 # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
 writeOutputs(prob, outputDir)
 om.n2(prob, show_browser=False, outfile=os.path.join(outputDir, "Struct-N2-Post-Run.html"))
+
+# ==============================================================================
+# Extract tip displacement
+# ==============================================================================
+
+FEAAssembler = prob.model.FEAAssembler
+
+components = ["SPAR.00", "SPAR.01", "RIB.22", "U_SKIN"]
+nodes = {}
+for comp in components:
+    compIDs = FEAAssembler.selectCompIDs(include=comp)
+    nodes[comp] = set(FEAAssembler.getGlobalNodeIDsForComps(compIDs, nastranOrdering=False))
+
+# The node at the front upper corner of the tip rib is the one node that is common to the upper skin, the front spar and the tip rib
+frontUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
+
+# Similarly, the node at the rear upper corner of the tip rib is the one node that is common to the upper skin, the rear spar and the tip rib
+rearUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
+
+frontUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(
+    frontUpperNodeGlobalID, nastranOrdering=False
+)[0]
+rearUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(rearUpperNodeGlobalID, nastranOrdering=False)[
+    0
+]
+
+# To compute the tip rotation we need the node coordinates
+frontUpperCoord = FEAAssembler.meshLoader.getBDFNodes(frontUpperNodeGlobalID, nastranOrdering=False)
+rearUpperCoord = FEAAssembler.meshLoader.getBDFNodes(rearUpperNodeGlobalID, nastranOrdering=False)
+
+
+# Now retrieve the displacements at these nodes and compute the overall tip displacement and rotation
+for fpName in flightPointsDict:
+
+    disp = prob.model.get_val(f"{fpName}.solver.u_struct", get_remote=False)
+    frontUpperDisp = None
+    rearUpperDisp = None
+    if frontUpperNodeLocalID != -1:
+        frontUpperDisp = disp[6 * frontUpperNodeLocalID : 6 * frontUpperNodeLocalID + 3]
+    if rearUpperNodeLocalID != -1:
+        rearUpperDisp = disp[6 * rearUpperNodeLocalID : 6 * rearUpperNodeLocalID + 3]
+
+    # broadcast front and rear upper displacements to all procs
+    hasFrontDisp = comm.allgather(frontUpperDisp is not None)
+    hasRearDisp = comm.allgather(rearUpperDisp is not None)
+    frontUpperDisp = comm.bcast(frontUpperDisp, root=np.argmax(hasFrontDisp))
+    rearUpperDisp = comm.bcast(rearUpperDisp, root=np.argmax(hasRearDisp))
+
+    tipZDisp = (frontUpperDisp[verticalIndex] + rearUpperDisp[verticalIndex]) / 2
+
+    # Compute the tip twist as the change in the angle of the line in the XZ plane between the front and rear upper nodes
+    x1 = frontUpperCoord[chordIndex]
+    z1 = frontUpperCoord[verticalIndex]
+    dx1 = frontUpperDisp[chordIndex]
+    dz1 = frontUpperDisp[verticalIndex]
+    x2 = rearUpperCoord[chordIndex]
+    z2 = rearUpperCoord[verticalIndex]
+    dx2 = rearUpperDisp[chordIndex]
+    dz2 = rearUpperDisp[verticalIndex]
+
+    tipTwist = np.rad2deg(np.arctan2((z2 + dz2) - (z1 + dz1), (x2 + dx2) - (x1 + dx1)) - np.arctan2(z2 - z1, x2 - x1))
+    compliance = prob.get_val(f"{fpName}.compliance")[0]
+    maxFailure = -np.inf
+    for comp in flightPointsDict[fpName].failureGroups:
+        maxFailure = max(maxFailure, prob.get_val(f"{fpName}.{comp}_maxFailure")[0])
+
+    if comm.rank == 0:
+        print(
+            f"Flight point {fpName}: Tip deflection = {tipZDisp} m, Tip twist = {tipTwist} deg, Compliance = {compliance}, Max failure = {maxFailure}"
+        )
