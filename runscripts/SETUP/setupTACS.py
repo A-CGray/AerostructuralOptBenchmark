@@ -24,7 +24,7 @@ from tacs import elements, constitutive, functions, TACS
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../INPUT/geometry"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
 # ==============================================================================

@@ -13,6 +13,7 @@ import openmdao.api as om
 from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
+from scipy.sparse import coo_matrix
 
 # ==============================================================================
 # Extension modules
@@ -179,3 +180,93 @@ def getOutputDir():
         return parentDirs[machineName]
     else:
         return "Output"
+
+
+# ==============================================================================
+# Function for translating OpenMDAO optimisation problem to a pyOptSparse problem
+# ==============================================================================
+def get_prom_name(model, abs_name):
+    abs2prom = model._var_abs2prom
+    if abs_name in abs2prom["input"]:
+        return abs2prom["input"][abs_name]
+    elif abs_name in abs2prom["output"]:
+        return abs2prom["output"][abs_name]
+    else:
+        return abs_name
+
+
+def convertSensDict(openmdaoSensDict):
+    """
+    Convert the OpenMDAO sensitivity dictionary into the format expected by pyOptSparse
+
+    OpenMDAO stores the derivative of y wrt x in sens[(y,x)], whereas pyoptsparse expects sens[y][x]
+    """
+    sensDict = {}
+    for key, val in openmdaoSensDict.items():
+        of = key[0]
+        wrt = key[1]
+        if of not in sensDict:
+            sensDict[of] = {}
+        sensDict[of][wrt] = val
+    return sensDict
+
+
+def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
+    name = get_prom_name(omProb.model, con["source"])
+
+    # Get the scaling factor if there is one
+    if con["scaler"] is None:
+        scale = 1.0
+    else:
+        scale = con["scaler"]
+
+    # Get bounds
+    # The bounds stored in the con are already scaled so we need to un-scale them
+    if con["equals"] is not None:
+        lb = ub = con["equals"] / scale
+    else:
+        lb = con["lower"] / scale
+        ub = con["upper"] / scale
+
+    # get size
+    size = con["global_size"] if con["distributed"] else con["size"]
+
+    linear = con["linear"]
+    if linear:
+        # If this constraint is linear we need to compute it's jacobian and transform it from the form:
+        # lb <= Ax - b <= ub
+        # to the form:
+        # lb + b <= Ax <= ub + b
+        conVals = omProb.get_val(name)
+        offsets = -conVals.copy()
+        jac = omProb.compute_totals(of=name, return_format="dict", debug_print=True)
+        jac = jac[name]
+
+        x = {}
+        for dv in wrt:
+            x[dv] = omProb.get_val(dv)
+
+        sparseJac = {}
+        for dv, subJac in jac.items():
+            dvPromName = get_prom_name(omProb.model, dv)
+            if dvPromName in wrt:
+                sparseMat = coo_matrix(subJac)
+                if len(sparseMat.data) != 0:
+                    # TODO: May need to account for DV scaling here
+                    sparseJac[dvPromName] = {
+                        "coo": [sparseMat.row, sparseMat.col, sparseMat.data],
+                        "shape": sparseMat.shape,
+                    }
+
+                    # Figure out the offset
+                    # conVals = Ax - b
+                    # b = Ax - conVals
+                    offsets += sparseMat.dot(x[dvPromName])
+        jac = sparseJac
+        ub += offsets
+        lb += offsets
+    else:
+        jac = None
+
+    # Add the constraint
+    optProb.addConGroup(name, size, lower=lb, upper=ub, scale=scale, wrt=wrt, jac=jac, linear=linear)

@@ -23,8 +23,8 @@ import openmdao.api as om
 from mphys import Multipoint
 from mphys.scenario_structural import ScenarioStructural
 from tacs.mphys import TacsBuilder
+from tacs.mphys.utils import add_tacs_constraints
 from tacs import TACS
-import tacs
 from pygeo.mphys import OM_DVGEOCOMP
 import dill  # A better version of pickle
 
@@ -48,7 +48,7 @@ from utils import (
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AircraftSpecs"))
 from STWFlightPoints import flightPointSets  # noqa: E402
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geomerty"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
 verticalIndex = wingGeometry["verticalIndex"]
@@ -265,25 +265,7 @@ class Top(Multipoint):
 
         # Add TACS constraints
         firstScenario = self.__getattribute__(flightPoints[0].name)
-        if hasattr(firstScenario.struct_post, "constraints"):
-            for system in firstScenario.struct_post.constraints.system_iter():
-                constraint = system.constr
-                constraintFuncNames = constraint.getConstraintKeys()
-                bounds = {}
-                constraint.getConstraintBounds(bounds)
-                for conName in constraintFuncNames:
-                    if self.comm.rank == 0:
-                        print("Adding constraint: ", conName)
-                    name = f"{flightPoints[0].name}.{system.name}.{conName}"
-                    if isinstance(constraint, tacs.constraints.panel_length.PanelLengthConstraint):
-                        self.add_constraint(name, equals=0.0, scaler=1.0)
-                    else:
-                        lb = bounds[f"{system.name}_{conName}"][0]
-                        ub = bounds[f"{system.name}_{conName}"][1]
-                        if all(lb == ub):
-                            self.add_constraint(name, equals=lb, linear=True, scaler=1e2)
-                        else:
-                            self.add_constraint(name, lower=lb, upper=ub, linear=True, scaler=1e2)
+        add_tacs_constraints(firstScenario)
 
 
 ################################################################################
