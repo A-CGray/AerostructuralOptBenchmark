@@ -1,7 +1,7 @@
 import os
 from pbs4py import PBS
 
-nas = PBS.nas(group_list="a1607", proc_type="sky", time=4, queue_name="normal", profile_file="")
+nas = PBS.nas(group_list="a1607", proc_type="cas", time=4, queue_name="normal", profile_file="")
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -21,7 +21,6 @@ for level, meshSize in zip(levels, meshSizes):
     numNodes = min(10, numNodes)
 
     nas.mpiexec = f"mpiexec_mpt -n {numNodes*nas.ncpus_per_node}"
-
     nas.requested_number_of_nodes = numNodes
 
     jobName = f"ADflowPolar-L{level}"
@@ -31,10 +30,11 @@ for level, meshSize in zip(levels, meshSizes):
     runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
     jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+    jobBody = [f"\n{line}" for line in jobBody]
 
     nas.write_job_file(
         job_filename=os.path.join(batchFileDir, f"{jobName}.{nas.batch_file_extension}"),
         job_name=jobName,
-        job_body=[f"\n{line}" for line in jobBody],
+        job_body=jobBody,
     )
-    # nas.launch(job_name=jobName, job_body=[f"\n{line}" for line in jobBody], blocking=False)
+    # nas.launch(job_name=jobName, job_body=jobBody, blocking=False)

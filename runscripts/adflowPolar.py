@@ -46,6 +46,10 @@ if comm.rank == 0:
 meshFile = getAeroMeshPath(args.level)
 aeroOptions = getADflowOptions(meshFile=meshFile, outputDir=outputDir)
 
+if args.level == 1:
+    aeroOptions["anksecondordswitchtol"] = 1e-4
+    aeroOptions["nsubiterturb"] = 10
+
 # Create solver
 CFDSolver = ADFLOW(options=aeroOptions)
 
