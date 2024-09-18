@@ -34,7 +34,7 @@ standardCruise = FlightPoint(
     failureGroups=[],
     mach=CRUISE_MACH,
     altitude=CRUISE_ALTITUDE,
-    alpha=3.874,
+    alpha=3.25,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -58,7 +58,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
     failureGroups=["l_skin", "u_skin", "spar", "rib"],
     mach=MANEUVER_MACH,
     altitude=MANEUVER_ALTITUDE,
-    alpha=10.3,
+    alpha=8.7,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -69,7 +69,7 @@ seaLevelLowSpeedPushDown = FlightPoint(
     failureGroups=["l_skin"],
     mach=MANEUVER_MACH,
     altitude=MANEUVER_ALTITUDE,
-    alpha=-6.4,
+    alpha=-5.8,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
