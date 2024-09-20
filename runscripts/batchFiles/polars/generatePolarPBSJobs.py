@@ -12,9 +12,6 @@ cellsPerProc = int(10e3)
 runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
-batchFileDir = os.path.join("batchFiles", "polars")
-os.makedirs(batchFileDir, exist_ok=True)
-
 for level, meshSize in zip(levels, meshSizes):
     idealNumProcs = meshSize // cellsPerProc
     numNodes = max(1, idealNumProcs // nas.ncpus_per_node)
@@ -33,7 +30,7 @@ for level, meshSize in zip(levels, meshSizes):
     jobBody = [f"\n{line}" for line in jobBody]
 
     nas.write_job_file(
-        job_filename=os.path.join(batchFileDir, f"{jobName}.{nas.batch_file_extension}"),
+        job_filename=f"{jobName}.{nas.batch_file_extension}",
         job_name=jobName,
         job_body=jobBody,
     )

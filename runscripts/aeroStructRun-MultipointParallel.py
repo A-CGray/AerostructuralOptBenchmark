@@ -686,7 +686,7 @@ if ptComm.rank == 0:
 # Potentially set initial DVs from a previous run
 # ==============================================================================
 if len(args.initDVs) != 0:
-    setValsFromFiles(args.initDVs, flightPointProb, flightPointProb.model)
+    setValsFromFiles(args.initDVs, flightPointProb)
 
 om.n2(flightPointProb, show_browser=False, outfile=os.path.join(localOutputDir, "AeroStruct-N2-Pre-Run.html"))
 om.n2(performanceProb, show_browser=False, outfile=os.path.join(outputDir, "Performance-N2-Pre-Run.html"))
@@ -964,7 +964,7 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
 
         flightPointProb.model.set_initial_values()
         if len(dvFiles) != 0:
-            setValsFromFiles(dvFiles, flightPointProb, flightPointProb.model)
+            setValsFromFiles(dvFiles, flightPointProb)
 
         # HACK: This run will fail but on the next one ADflow will start from nice values
         runAeroStructAnalyses(evalFuncs=evalFuncs, writeSolution=writeSolution)
