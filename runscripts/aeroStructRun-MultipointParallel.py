@@ -409,7 +409,12 @@ if args.noFiles:
     aero_options["writesurfacesolution"] = False
 warp_options = getIDWarpOptions(aeroMeshFile)
 aero_builder = ADflowBuilder(
-    aero_options, mesh_options=warp_options, scenario="aerostructural", write_solution=False, res_ref=1e7
+    aero_options,
+    mesh_options=warp_options,
+    scenario="aerostructural",
+    write_solution=False,
+    res_ref=1e7,
+    restart_failed_analysis=True,
 )
 
 
@@ -572,6 +577,7 @@ class AerostructuralFlightPoint(Multipoint):
             # reraise_child_analysiserror=True,
             # use_apply_nonlinear=True, This doesn't work
             restart_from_successful=True,
+            err_on_non_converge=True,
         )
         scenario.coupling.linear_solver = om.PETScKrylov(
             atol=1e-4 * args.tolFactor, rtol=1e-8 * args.tolFactor, maxiter=50, iprint=2
