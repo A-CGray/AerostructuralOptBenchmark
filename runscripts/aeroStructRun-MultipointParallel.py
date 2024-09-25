@@ -414,7 +414,7 @@ aero_builder = ADflowBuilder(
     scenario="aerostructural",
     write_solution=False,
     res_ref=1e7,
-    restart_failed_analysis=True,
+    restart_failed_analysis=False,
 )
 
 
