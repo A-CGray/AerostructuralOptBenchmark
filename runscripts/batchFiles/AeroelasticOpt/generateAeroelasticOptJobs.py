@@ -1,5 +1,6 @@
 import os
 from pbs4py import PBS
+import numpy as np
 
 runTime = 48
 
@@ -18,17 +19,28 @@ for linType in ["Linear", "Nonlinear"]:
     initDVs = os.path.join(runDir, "DVs", f"StructOpt-L1-{linType}.pkl")
     for level, meshSize in zip(levels, meshSizes):
         idealNumProcs = 2 * meshSize // cellsPerProc
-        numNodes = max(1, idealNumProcs // nas.ncpus_per_node)
+        numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
         numNodes = min(20, numNodes)
+        totalProcs = numNodes * nas.ncpus_per_node
 
-        nas.mpiexec = f"mpiexec_mpt -n {numNodes*nas.ncpus_per_node}"
+        procs = np.array([0.425, 0.275])
+        procs /= np.sum(procs)
+        procs *= totalProcs
+        procs = procs.astype(int)
+        remainingProcs = totalProcs - np.sum(procs)
+        if remainingProcs != 0:
+            for ii in range(remainingProcs):
+                procs[-(ii + 1)] += 1
+        procString = " ".join([str(i) for i in procs])
+
+        nas.mpiexec = f"mpiexec_mpt -n {totalProcs}"
         nas.requested_number_of_nodes = numNodes
 
         jobName = f"AeroelasticOpt-L{level}-{linType}"
         outputDir = f"AeroelasticOpt/{jobName}"
         fullOutputDir = os.path.join(baseOutputDir, outputDir)
         linOption = "--nonlinear" if linType == "Nonlinear" else ""
-        runCommand = f"python aeroStructRun-MultipointParallel.py --task opt --optType structMass --initPenalty 0.1 --timeLimit {(runTime*3600 - 600)} --addStructDVs --flightPointSet maneuverOnly --aeroLevel {level} --structLevel 1 {linOption} --initDVs {initDVs} --output {outputDir}"
+        runCommand = f"python aeroStructRun-MultipointParallel.py --task opt --optType structMass --initPenalty 0.1 --timeLimit {(runTime*3600 - 600)} --addStructDVs --flightPointSet maneuverOnly --procs {procString} --aeroLevel {level} --structLevel 1 {linOption} --initDVs {initDVs} --output {outputDir}"
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
         jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
