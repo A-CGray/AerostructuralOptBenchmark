@@ -380,6 +380,8 @@ elif args.task == "opt":
         prob.driver.opt_settings["Time limit"] = args.timeLimit
     prob.driver.options["invalid_desvar_behavior"] = "ignore"
     prob.driver.options["debug_print"] = ["desvars", "objs", "nl_cons"]
+    prob.driver.options["print_opt_prob"] = True
+    prob.driver.options["output_dir"] = outputDir
 
     # ==============================================================================
     # Setup case recorder
