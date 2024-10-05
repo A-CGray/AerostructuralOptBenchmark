@@ -50,6 +50,7 @@ parser.add_argument(
 parser.add_argument("--optIter", type=int, default=1000)
 parser.add_argument("--hessianUpdate", type=int, default=40)
 parser.add_argument("--initPenalty", type=float, default=0.0)
+parser.add_argument("--violLimit", type=float, default=10.0)
 parser.add_argument("--stepLimit", type=float, default=0.02)
 parser.add_argument("--feasibility", type=float, default=1e-6)
 parser.add_argument("--optimality", type=float, default=1e-6)

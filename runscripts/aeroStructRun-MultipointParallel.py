@@ -1106,6 +1106,7 @@ if args.task in ["check", "opt", "trim"]:
         args.optIter,
         args.hessianUpdate,
         args.initPenalty,
+        args.violLimit,
         args.stepLimit,
         args.feasibility,
         args.optimality,

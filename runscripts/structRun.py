@@ -370,6 +370,7 @@ elif args.task == "opt":
         args.optIter,
         args.hessianUpdate,
         args.initPenalty,
+        args.violLimit,
         args.stepLimit,
         args.feasibility,
         args.optimality,

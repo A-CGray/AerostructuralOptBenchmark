@@ -22,7 +22,9 @@ import os
 # ==============================================================================
 
 
-def getOptOptions(alg, outputDir, majIterLimit, hessianUpdate, initPenalty, stepLimit, feasibility, optimality):
+def getOptOptions(
+    alg, outputDir, majIterLimit, hessianUpdate, initPenalty, violLimit, stepLimit, feasibility, optimality
+):
     if alg.lower() == "snopt":
         return {
             "Print frequency": 1000,
@@ -40,6 +42,7 @@ def getOptOptions(alg, outputDir, majIterLimit, hessianUpdate, initPenalty, step
             "Function precision": 1e-10,
             "New superbasics limit": 2000,
             "Penalty parameter": initPenalty,
+            "Violation limit": violLimit,
             "Scale option": 1,
             "Hessian updates": hessianUpdate,
             "Print file": os.path.join(outputDir, "SNOPT_print.out"),
