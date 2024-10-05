@@ -40,7 +40,7 @@ for linType in ["Linear", "Nonlinear"]:
         outputDir = f"AeroelasticOpt/{jobName}"
         fullOutputDir = os.path.join(baseOutputDir, outputDir)
         linOption = "--nonlinear" if linType == "Nonlinear" else ""
-        runCommand = f"python aeroStructRun-MultipointParallel.py --task opt --optType structMass --initPenalty 0.1 --timeLimit {(runTime*3600 - 600)} --addStructDVs --flightPointSet maneuverOnly --procs {procString} --aeroLevel {level} --structLevel 1 {linOption} --initDVs {initDVs} --output {outputDir}"
+        runCommand = f"python aeroStructRun-MultipointParallel.py --task opt --optType structMass --initPenalty 0.1 --violLimit 0.05 --timeLimit {(runTime*3600 - 600)} --addStructDVs --flightPointSet maneuverOnly --procs {procString} --aeroLevel {level} --structLevel 1 {linOption} --initDVs {initDVs} --output {outputDir}"
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
         jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
