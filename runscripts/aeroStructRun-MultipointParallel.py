@@ -123,7 +123,7 @@ parser.add_argument(
 
 # --- Optimisation options ---
 parser.add_argument("--rangeScale", type=float, default=1.0, help="Factor to scale the mission range by")
-parser.add_argument("--maxWingLoading", type=float, default=650.0, help="Maximum allowable wing loading (kg/m^2)")
+parser.add_argument("--maxWingLoading", type=float, default=600.0, help="Maximum allowable wing loading (kg/m^2)")
 parser.add_argument(
     "--optType",
     type=str,
