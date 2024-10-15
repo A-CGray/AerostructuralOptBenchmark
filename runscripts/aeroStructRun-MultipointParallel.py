@@ -1112,6 +1112,7 @@ if args.task in ["check", "opt", "trim"]:
         args.optimality,
     )
 
+    restartDict = None
     if args.optimiser == "snopt":
         optimiserOptions["Return work arrays"] = True
         if args.task == "trim":
@@ -1120,6 +1121,11 @@ if args.task in ["check", "opt", "trim"]:
         if args.timeLimit is not None:
             timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
             optimiserOptions["Time limit"] = args.timeLimit
+        if args.restartDict is not None:
+            with open(args.restartDict, "rb") as restartFile:
+                restartDict = dill.load(restartFile)
+                optimiserOptions["Start"] = "Hot"
+
 
     optimiser = OPT(optimiserMap[args.optimiser], options=optimiserOptions)
 
@@ -1163,7 +1169,10 @@ if args.task in ["check", "opt", "trim"]:
                 update = np.clip(update, -5.0, 5.0).flatten()
                 alphas[f"{fpName}_AOA"] += update
     elif args.task == "opt":
-        sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename)
+        if restartDict is not None:
+            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict)
+        else:
+            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename)
         if args.optimiser == "snopt":
             # SNOPT Returns it's working arrays in a restart dictionary that we should save for future hot starts
             restartDict = sol[-1]

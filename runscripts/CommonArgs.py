@@ -34,6 +34,12 @@ parser.add_argument(
     default=[],
     help="Similar to `initDVs` except that these DVs will be set after an initial call of `run_model` so that they're not used during initialisation. You can pass multiple paths in which case later files will overwrite DVs from earlier files",
 )
+parser.add_argument(
+    "--restartDict",
+    type=str,
+    default=None,
+    help="SNOPT restart dictionary to use for a hot start"
+)
 
 # --- Solver options ---
 parser.add_argument(
