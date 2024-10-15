@@ -179,7 +179,7 @@ def setupDVGeo(
             pass
         top.connect(dvName, f"{geoCompName}.{dvName}")
         if addGeoDVs:
-            top.add_design_var(dvName, lower=-5.0, upper=5.0, scaler=dvScaleFactor * 1)
+            top.add_design_var(dvName, lower=-10.0, upper=10.0, scaler=dvScaleFactor * 1)
 
     if args.shape:
         dvName = "local"
