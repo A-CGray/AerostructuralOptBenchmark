@@ -4,7 +4,7 @@ def getIDWarpOptions(meshFile):
         "fileType": "CGNS",
         "aExp": 3.0,
         "bExp": 5.0,
-        "LdefFact": 10.0,
+        "LdefFact": 1000.0,
         "alpha": 0.25,
         "errTol": 0.0005,
         "evalMode": "fast",
