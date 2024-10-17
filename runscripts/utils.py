@@ -97,13 +97,21 @@ def setValsFromFiles(files, prob):
         else:
             raise ValueError("Unrecognised file type, setValsFromFiles only works with .sql, .pkl or .hst files")
         for dv in model.get_design_vars():
+            # See if the abs name is in the file
             try:
                 prob.set_val(dv, old_design_vars[dv])
                 if prob.comm.rank == 0:
                     print(f"Setting {dv} from {fileName}")
             except KeyError:
-                pass
-        # Also try setting anything from dvs
+                # If it's not then try the promoted name
+                promName = get_prom_name(prob.model, dv)
+                try:
+                    prob.set_val(dv, old_design_vars[promName])
+                    if prob.comm.rank == 0:
+                        print(f"Setting {dv} from {fileName}")
+                except KeyError:
+                    pass
+        # Also try setting anything from the file that looks like a dv
         for dv in old_design_vars:
             if "dvs." in dv and dv not in model.get_design_vars():
                 try:
@@ -128,9 +136,9 @@ def writeOutputs(prob, outputDir, fileName="Outputs"):
         The problem to write the outputs from
     outputDir : _type_
         _description_
-    """  #
+    """
     outputs = prob.model.list_outputs(
-        return_format="dict", print_arrays=False, excludes=["*adflow_vol_coords", "*adflow_states"]
+        return_format="dict", print_arrays=False, excludes=["*_vol_coords", "*_states"]
     )
     if prob.model.comm.rank == 0:
         print(outputs)
