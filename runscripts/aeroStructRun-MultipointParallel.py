@@ -575,7 +575,7 @@ class AerostructuralFlightPoint(Multipoint):
         # ==============================================================================
         scenario = getattr(self, fp.name)
         scenario.coupling.nonlinear_solver = om.NonlinearBlockGS(
-            maxiter=50,
+            maxiter=100,
             iprint=2,
             atol=1e-4 * args.tolFactor,
             rtol=1e-8 * args.tolFactor,
