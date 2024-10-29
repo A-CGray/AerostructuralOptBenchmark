@@ -293,7 +293,15 @@ if ptRank == 0:
     os.makedirs(localAeroOutputDir, exist_ok=True)
     os.makedirs(localStructOutputDir, exist_ok=True)
 
-# Print out the full list of command line arguments
+# --- Create empty csv files that we will store timing data in ---
+funcTimingFile = os.path.join(localOutputDir, f"{localFlightPoint.name}-FuncTiming.csv")
+funcSensTimingFile = os.path.join(localOutputDir, f"{localFlightPoint.name}-FuncSensTiming.csv")
+if ptRank == 0:
+    for fileName in [funcTimingFile, funcSensTimingFile]:
+        file = open(fileName, "w")
+        file.close()
+
+# Print out and save the full list of command line arguments
 saveRunCommand(parser, args, outputDir)
 
 for ii in range(globalComm.size):
@@ -810,6 +818,7 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
+    funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
             try:
@@ -826,6 +835,11 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     if evalFuncs is not None:
         for func in evalFuncs:
             funcs[func] = flightPointProb.get_val(func)
+
+    funcRunTime = time.time() - funcStartTime
+    if ptRank == 0:
+        with open(funcTimingFile, "a") as f:
+            f.write(f"{funcRunTime:.16e}\n")
 
     if writeSolution and not args.noFiles:
         scenario = getattr(flightPointProb.model, localFlightPoint.name)
@@ -859,6 +873,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
+    funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
             try:
@@ -880,6 +895,11 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
             for wrt, val in sens.items():
                 wrtName = get_prom_name(flightPointProb.model, wrt)
                 funcSens[ofName][wrtName] = val
+
+    funcRunTime = time.time() - funcStartTime
+    if ptRank == 0:
+        with open(funcSensTimingFile, "a") as f:
+            f.write(f"{funcRunTime:.16e}\n")
 
     # HACK: We need to provide bogus empty derivatives for the functions that are in dispFuncs but not gradFuncs
     # otherwise multipoint will complain
