@@ -69,9 +69,10 @@ kcorr = 5.0 / 6.0  # shear correction factor
 # --- Design variable values ---
 flangeFraction = 1.0
 # Panel length
+defaultPanelLength = 0.5
 defaultPanelLengthMax = np.inf
-panelLengthMin = 0.0
-panelLengthScale = 1.0
+defaultPanelLengthMin = 0.0
+defaultPanelLengthScale = 1.0
 
 # Stiffener pitch
 defaultStiffenerPitch = 0.15  # m
@@ -158,7 +159,7 @@ def computeDVNums(dvNum, usePanelLengthDVs, usePlyFractionDVs, useStiffenerPitch
 def computeDVScales(usePanelLengthDVs, usePlyFractionDVs, useStiffenerPitchDVs, numPlies):
     DVScales = []
     if usePanelLengthDVs:
-        DVScales.append(panelLengthScale)
+        DVScales.append(defaultPanelLengthScale)
     if useStiffenerPitchDVs:
         DVScales.append(defaultStiffenerPitchScale)
     DVScales.append(defaultPanelThicknessScale)
@@ -262,7 +263,7 @@ def element_callback(
     DVScales = []
     if usePanelLengthDVs:
         panelLengthNum = currDVNum
-        DVScales.append(panelLengthScale)
+        DVScales.append(defaultPanelLengthScale)
         currDVNum += 1
     else:
         panelLengthNum = -1
