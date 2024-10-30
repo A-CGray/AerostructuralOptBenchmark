@@ -1139,8 +1139,9 @@ if args.task in ["check", "opt", "trim"]:
             optimiserOptions["Problem Type"] = "Feasible point"
             optimiserOptions["Major step limit"] = 10.0
         if args.timeLimit is not None:
+            # Correct the time limit for the time that has elapsed already
             timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
-            optimiserOptions["Time limit"] = args.timeLimit
+            optimiserOptions["Time limit"] = timeLimit
         if args.restartDict is not None:
             with open(args.restartDict, "rb") as restartFile:
                 restartDict = dill.load(restartFile)
