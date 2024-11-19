@@ -67,6 +67,7 @@ from utils import (
     saveRunCommand,
     get_prom_name,
     addConstraintFromOpenMDAO,
+    writeOutputs
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -104,7 +105,7 @@ parser.add_argument(
     "--task",
     type=str,
     default="check",
-    choices=["check", "analysis", "derivCheck", "opt", "trim"],
+    choices=["check", "analysis", "derivCheck", "opt", "trim", "polar"],
     help="Task to run",
 )
 parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
@@ -1030,6 +1031,21 @@ if len(args.postInitDVs) != 0:
                 funcs.update(func)
         funcs = globalComm.bcast(funcs, root=0)
         funcs = objCon(funcs, True, None)
+
+if args.task=="polar":
+    alphaPert = 1.0
+    machPert = 0.02
+    numPoints=9
+    alphas = localFlightPoint.alpha + np.linspace(-alphaPert, alphaPert, numPoints)
+    machs = localFlightPoint.mach + np.linspace(-machPert, machPert, numPoints)
+    for alphaIndex, alpha in enumerate(alphas):
+        for machIndex, mach in enumerate(machs):
+            localFlightPoint.mach = mach
+            # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
+            x = {f"dvs.{localFlightPoint.name}_AOA":alpha}
+            funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
+            writeOutputs(flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs")
+
 
 
 if args.task in ["check", "opt", "trim"]:
