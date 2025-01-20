@@ -35,8 +35,8 @@ import time
 import numpy as np
 from mpi4py import MPI
 import openmdao.api as om
-from mphys import Multipoint
-from mphys.scenario_aerostructural import ScenarioAeroStructural
+from mphys import Multipoint, MPhysVariables
+from mphys.scenarios import ScenarioAeroStructural
 from adflow.mphys import ADflowBuilder
 from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
@@ -400,7 +400,7 @@ struct_builder = TacsBuilder(
     element_callback=element_callback,
     constraint_setup=constraint_callback,
     problem_setup=setup_tacs_problem,
-    coupled=True,
+    coupling_loads=[MPhysVariables.Structures.Loads.AERODYNAMIC],
     write_solution=False,
     res_ref=1e3,
 )
@@ -501,8 +501,9 @@ class AerostructuralFlightPoint(Multipoint):
         for discipline in ["aero", "struct"]:
             # Tell the geometry component that there will be a set of coordinates for the discipline
             geometryComp.nom_add_discipline_coords(discipline)
-            # Connect the original mesh coordinates as an input to the geometry component
-            self.connect(f"mesh_{discipline}.x_{discipline}0", f"geometry.x_{discipline}_in")
+        # Connect the original mesh coordinates as an input to the geometry component
+        self.connect(f"mesh_aero.{MPhysVariables.Aerodynamics.Surface.Mesh.COORDINATES}", f"geometry.x_aero_in")
+        self.connect(f"mesh_struct.{MPhysVariables.Structures.Mesh.COORDINATES}", f"geometry.x_struct_in")
 
         # --- initialize MELD ---
         # Find the nodes at the intersections of the spars and ribs and include them in the LDTransfer
@@ -528,8 +529,16 @@ class AerostructuralFlightPoint(Multipoint):
             ),
         )
 
-        for discipline in ["aero", "struct"]:
-            self.mphys_connect_scenario_coordinate_source("geometry", scenarioName, discipline)
+        # Connect geometry to aero and struct meshes
+        # Aero
+        src = f'geometry.x_aero0'
+        target = f'{scenarioName}.{MPhysVariables.Aerodynamics.Surface.COORDINATES_INITIAL}'
+        self.connect(src, target)
+        # Structures
+        src = f'geometry.x_struct0'
+        target = f'{scenarioName}.{MPhysVariables.Structures.COORDINATES}'
+        self.connect(src, target)
+
         self.connect("dv_struct", f"{scenarioName}.dv_struct")
 
     def configure(self):
@@ -806,6 +815,10 @@ if ptComm.rank == 0:
         print(f"  - {func}")
     print("===============================================================================\n")
 
+def writeAeroStructSolution():
+    scenario = getattr(flightPointProb.model, localFlightPoint.name)
+    scenario.struct_post.write_solution()
+    scenario.aero_post.nom_write_solution()
 
 def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     """Run aerostructural analyses for each flight point
@@ -843,9 +856,7 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
             f.write(f"{funcRunTime:.16e}\n")
 
     if writeSolution and not args.noFiles:
-        scenario = getattr(flightPointProb.model, localFlightPoint.name)
-        scenario.struct_post.write_solution()
-        scenario.aero_post.nom_write_solution()
+        writeAeroStructSolution()
 
     # Print out some interesting values
     if ptComm.rank == 0:
@@ -1196,6 +1207,7 @@ if args.task in ["check", "opt", "trim"]:
                     print("=" * 80)
                     print("Trim solve converged!")
                     print("=" * 80)
+                writeAeroStructSolution()
                 break
 
             sens, _ = MP.sens(alphas, funcs)
