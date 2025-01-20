@@ -43,7 +43,7 @@ for optType in ["FixedPlanform", "VariablePlanform"]:
         if optType == "VariablePlanform":
             geoDVs += " --sweep --span --taper"
 
-        jobName = f"PostOptPolar-{optType}Opt-L2-{linType}"
+        jobName = f"PostOptPolar-{optType}Opt-L2-{linType}-test"
         outputDir = f"PostOptPolars/{jobName}"
         fullOutputDir = os.path.join(baseOutputDir, outputDir)
         linOption = "--nonlinear" if linType == "Nonlinear" else ""

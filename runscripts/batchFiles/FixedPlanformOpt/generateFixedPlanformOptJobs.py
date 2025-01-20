@@ -2,7 +2,7 @@ import os
 from pbs4py import PBS
 import numpy as np
 
-runTime = 48
+runTime = 72
 
 nas = PBS.nas(group_list="a1607", proc_type="cas", time=runTime, queue_name="long", profile_file="")
 nas.shell = "zsh"
@@ -42,8 +42,8 @@ for linType in ["Linear", "Nonlinear"]:
         linOption = "--nonlinear" if linType == "Nonlinear" else ""
         runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType fuelburn \\
---initPenalty 0.1 --violLimit 0.05 \\
---timeLimit {(runTime*3600 - 600)} \\
+--initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 \\
+--timeLimit {(runTime*3600 - (15*60))} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist \\
 --flightPointSet 3pt \\

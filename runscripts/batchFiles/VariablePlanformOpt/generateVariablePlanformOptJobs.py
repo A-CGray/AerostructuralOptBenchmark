@@ -4,7 +4,7 @@ import numpy as np
 
 runTime = 72
 
-nas = PBS.nas(group_list="a1607", proc_type="sky", time=runTime, queue_name="long", profile_file="")
+nas = PBS.nas(group_list="a1607", proc_type="cas", time=runTime, queue_name="long", profile_file="")
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -23,7 +23,7 @@ for linType in ["Linear", "Nonlinear"]:
         numNodes = min(20, numNodes)
         totalProcs = numNodes * nas.ncpus_per_node
 
-        procs = np.array([0.3, 0.425, 0.275])
+        procs = np.array([0.21252905, 0.53634619, 0.25112475])
         procs /= np.sum(procs)
         procs *= totalProcs
         procs = procs.astype(int)
@@ -42,7 +42,7 @@ for linType in ["Linear", "Nonlinear"]:
         linOption = "--nonlinear" if linType == "Nonlinear" else ""
         runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType fuelburn \\
---initPenalty 0.1 --violLimit 0.05 \\
+--initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 \\
 --timeLimit {(runTime*3600 - 600)} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist --sweep --span --taper \\
