@@ -38,6 +38,8 @@ import openmdao.api as om
 from mphys import Multipoint, MPhysVariables
 from mphys.scenarios import ScenarioAeroStructural
 from adflow.mphys import ADflowBuilder
+from adflow import ADFLOW
+from idwarp import USMesh
 from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
 from tacs import TACS
@@ -463,13 +465,13 @@ class AerostructuralFlightPoint(Multipoint):
 
         # --- initialize aero builder ---
         aero_builder.initialize(self.comm)
-        aeroSolver = aero_builder.get_solver()
+        self.aeroSolver = aero_builder.get_solver()
 
         # Add lift distribution and slice file output
         if not args.noFiles:
-            aeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
+            self.aeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
             slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 11)
-            aeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+            self.aeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
 
         # ==============================================================================
         # TACS Setup
@@ -601,6 +603,27 @@ class AerostructuralFlightPoint(Multipoint):
             atol=1e-4 * args.tolFactor, rtol=1e-8 * args.tolFactor, maxiter=50, iprint=2
         )
         scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
+
+        # ==============================================================================
+        # Setup dummy aero solver
+        # ==============================================================================
+        # In order to write out the jig shape of the OML and its twist distribution, I need to setup a dummy ADflow
+        # instance that will recieve surface coordinates directly from the DVGeo without structural displacements. I
+        # will then write solution files from this solver without every actually running it
+        self.dummyAeroSolver = None
+
+        if not args.noFiles:
+            if ptID == 0:
+                self.dummyAeroSolver = ADFLOW(options=aero_options, comm=self.comm)
+                self.dummyAeroSolver.setAeroProblem(localFlightPoint)
+                self.dummyAeroSolver.setDVGeo(geometryComp.nom_getDVGeo())
+                mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
+                self.dummyAeroSolver.setMesh(mesh)
+                self.dummyAeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
+                slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 11)
+                self.dummyAeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+
+                self.dummyAeroSolver.setOption("nCycles", 0)
 
 
 # --- Now actually create the OpenMDAO model for each point ---
@@ -819,6 +842,11 @@ def writeAeroStructSolution():
     scenario = getattr(flightPointProb.model, localFlightPoint.name)
     scenario.struct_post.write_solution()
     scenario.aero_post.nom_write_solution()
+    if ptID == 0:
+        dummyAeroSolver = flightPointProb.model.dummyAeroSolver
+        dummyAeroSolver.setAeroProblem(localFlightPoint)
+        dummyAeroSolver(localFlightPoint, writeSolution=False)
+        dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter-1))
 
 def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     """Run aerostructural analyses for each flight point
@@ -920,9 +948,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
             funcSens[func] = {}
 
     if writeSolution and not args.noFiles:
-        scenario = getattr(flightPointProb.model, localFlightPoint.name)
-        scenario.struct_post.write_solution()
-        scenario.aero_post.nom_write_solution()
+        writeAeroStructSolution()
 
     return funcSens
 
@@ -1056,6 +1082,7 @@ if args.task=="polar":
             x = {f"dvs.{localFlightPoint.name}_AOA":alpha}
             funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
             writeOutputs(flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs")
+            writeAeroStructSolution()
 
 
 
