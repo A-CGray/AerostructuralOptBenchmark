@@ -1167,8 +1167,8 @@ if args.task in ["check", "opt", "trim"]:
             optimiserOptions["Major step limit"] = 10.0
         if args.timeLimit is not None:
             # Correct the time limit for the time that has elapsed already
-            timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
-            optimiserOptions["Time limit"] = int(timeLimit)
+            args.timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
+            optimiserOptions["Time limit"] = int(args.timeLimit)
         if args.restartDict is not None:
             with open(args.restartDict, "rb") as restartFile:
                 restartDict = dill.load(restartFile)
@@ -1219,9 +1219,9 @@ if args.task in ["check", "opt", "trim"]:
                 alphas[f"{fpName}_AOA"] += update
     elif args.task == "opt":
         if restartDict is not None:
-            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict)
+            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict, timeLimit=args.timeLimit)
         else:
-            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename)
+            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, timeLimit=args.timeLimit)
         if args.optimiser == "snopt":
             # SNOPT Returns it's working arrays in a restart dictionary that we should save for future hot starts
             restartDict = sol[-1]
