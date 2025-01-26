@@ -69,7 +69,7 @@ from utils import (
     saveRunCommand,
     get_prom_name,
     addConstraintFromOpenMDAO,
-    writeOutputs
+    writeOutputs,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -107,7 +107,7 @@ parser.add_argument(
     "--task",
     type=str,
     default="check",
-    choices=["check", "analysis", "derivCheck", "opt", "trim", "polar"],
+    choices=["writeJigShape", "check", "analysis", "derivCheck", "opt", "trim", "polar"],
     help="Task to run",
 )
 parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
@@ -533,12 +533,12 @@ class AerostructuralFlightPoint(Multipoint):
 
         # Connect geometry to aero and struct meshes
         # Aero
-        src = f'geometry.x_aero0'
-        target = f'{scenarioName}.{MPhysVariables.Aerodynamics.Surface.COORDINATES_INITIAL}'
+        src = f"geometry.x_aero0"
+        target = f"{scenarioName}.{MPhysVariables.Aerodynamics.Surface.COORDINATES_INITIAL}"
         self.connect(src, target)
         # Structures
-        src = f'geometry.x_struct0'
-        target = f'{scenarioName}.{MPhysVariables.Structures.COORDINATES}'
+        src = f"geometry.x_struct0"
+        target = f"{scenarioName}.{MPhysVariables.Structures.COORDINATES}"
         self.connect(src, target)
 
         self.connect("dv_struct", f"{scenarioName}.dv_struct")
@@ -622,7 +622,9 @@ class AerostructuralFlightPoint(Multipoint):
                 self.dummyAeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
                 slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 11)
                 self.dummyAeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
-
+                # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
+                # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
+                # steps and doesn't actually waste any time solving.
                 self.dummyAeroSolver.setOption("nCycles", 0)
 
 
@@ -838,6 +840,10 @@ if ptComm.rank == 0:
         print(f"  - {func}")
     print("===============================================================================\n")
 
+
+# ==============================================================================
+# Define functions to be used in the optimisation/analysis
+# ==============================================================================
 def writeAeroStructSolution():
     scenario = getattr(flightPointProb.model, localFlightPoint.name)
     scenario.struct_post.write_solution()
@@ -846,7 +852,8 @@ def writeAeroStructSolution():
         dummyAeroSolver = flightPointProb.model.dummyAeroSolver
         dummyAeroSolver.setAeroProblem(localFlightPoint)
         dummyAeroSolver(localFlightPoint, writeSolution=False)
-        dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter-1))
+        dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter - 1))
+
 
 def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     """Run aerostructural analyses for each flight point
@@ -1039,254 +1046,270 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
     return funcs
 
 
-# if args.task != "check":
-# ==============================================================================
-# Run the model to initialize everything
-# ==============================================================================
-funcs = runAnalysesRobustly(args.initDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
-# Before proceeding, combine the function values from all flight points on the root proc and broadcast to the rest
-gatheredFuncs = globalComm.gather(funcs, root=0)
-funcs = {}
-if globalRank == 0:
-    for func in gatheredFuncs:
-        funcs.update(func)
-funcs = globalComm.bcast(funcs, root=0)
-funcs = objCon(funcs, True, None)
-if ptRank == 0:
-    pp(funcs)
-
-# If we have DVs that were supposed to be set after initialisation, we can set those now and re-run the model
-if len(args.postInitDVs) != 0:
-    print(f"Proc {globalRank}: Running again with postInitDVs", flush=True)
-    setValsFromFiles(args.postInitDVs, flightPointProb)
-    if args.task != "check":
-        funcs = runAnalysesRobustly(args.postInitDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
-        gatheredFuncs = globalComm.gather(funcs, root=0)
-        funcs = {}
-        if globalRank == 0:
-            for func in gatheredFuncs:
-                funcs.update(func)
-        funcs = globalComm.bcast(funcs, root=0)
-        funcs = objCon(funcs, True, None)
-
-if args.task=="polar":
-    alphaPert = 1.0
-    machPert = 0.02
-    numPoints=9
-    alphas = localFlightPoint.alpha + np.linspace(-alphaPert, alphaPert, numPoints)
-    machs = localFlightPoint.mach + np.linspace(-machPert, machPert, numPoints)
-    for alphaIndex, alpha in enumerate(alphas):
-        for machIndex, mach in enumerate(machs):
-            localFlightPoint.mach = mach
-            # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
-            x = {f"dvs.{localFlightPoint.name}_AOA":alpha}
-            funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
-            writeOutputs(flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs")
-            writeAeroStructSolution()
-
-
-
-if args.task in ["check", "opt", "trim"]:
-    # ==============================================================================
-    # Setup optimization problem
-    # ==============================================================================
-    optProb = Optimization("Aero-Structural Optimization", MP.obj)
-
-    # ==============================================================================
-    # Define design variables
-    # ==============================================================================
-    for dvName, dv in designVariables.items():
+if args.task == "writeJigShape":
+    x = {}
+    for dvName in designVariables:
         try:
             value = flightPointProb.get_val(dvName)
         except KeyError:
             value = performanceProb.get_val(dvName)
-        scale = 1.0 if dv["scaler"] is None else dv["scaler"]
-        optProb.addVarGroup(
-            dvName,
-            nVars=dv["global_size"],
-            value=value,
-            lower=dv["lower"] / scale,
-            upper=dv["upper"] / scale,
-            scale=scale,
-        )
+        x[dvName] = value
+    scenario = getattr(flightPointProb.model, localFlightPoint.name)
+    if ptID == 0:
+        dummyAeroSolver = flightPointProb.model.dummyAeroSolver
+        dummyAeroSolver.DVGeo.setDesignVars(x)
+    writeAeroStructSolution()
+    exit(0)
 
+if args.task != "check":
     # ==============================================================================
-    # Define constraints
+    # Run the model to initialize everything
     # ==============================================================================
-    structConTypes = ["adjcon", "dvcon", "panellengthcon"]
+    funcs = runAnalysesRobustly(args.initDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
+    # Before proceeding, combine the function values from all flight points on the root proc and broadcast to the rest
+    gatheredFuncs = globalComm.gather(funcs, root=0)
+    funcs = {}
+    if globalRank == 0:
+        for func in gatheredFuncs:
+            funcs.update(func)
+    funcs = globalComm.bcast(funcs, root=0)
+    funcs = objCon(funcs, True, None)
+    if ptRank == 0:
+        pp(funcs)
 
-    for conName, con in constraints.items():
-        # --- Failure constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
-        if "ksfailure" in conName.lower():
-            wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
-            addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+    # If we have DVs that were supposed to be set after initialisation, we can set those now and re-run the model
+    if len(args.postInitDVs) != 0:
+        print(f"Proc {globalRank}: Running again with postInitDVs", flush=True)
+        setValsFromFiles(args.postInitDVs, flightPointProb)
+        if args.task != "check":
+            funcs = runAnalysesRobustly(args.postInitDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
+            gatheredFuncs = globalComm.gather(funcs, root=0)
+            funcs = {}
+            if globalRank == 0:
+                for func in gatheredFuncs:
+                    funcs.update(func)
+            funcs = globalComm.bcast(funcs, root=0)
+            funcs = objCon(funcs, True, None)
 
-        # --- Structural constraints (depend on struct DVs, and maybe geometric DVs) ---
-        elif "adjcon" in conName.lower() or "dvcon" in conName.lower():
-            wrt = structDesignVariables.copy()
-            addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+    if args.task == "polar":
+        alphaPert = 1.0
+        machPert = 0.02
+        numPoints = 9
+        alphas = localFlightPoint.alpha + np.linspace(-alphaPert, alphaPert, numPoints)
+        machs = localFlightPoint.mach + np.linspace(-machPert, machPert, numPoints)
+        for alphaIndex, alpha in enumerate(alphas):
+            for machIndex, mach in enumerate(machs):
+                localFlightPoint.mach = mach
+                # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
+                x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
+                funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
+                writeOutputs(
+                    flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs"
+                )
+                writeAeroStructSolution()
 
-        elif "panellengthcon" in conName.lower():
-            wrt = structDesignVariables + geoDesignVariables
-            addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+    if args.task in ["check", "opt", "trim"]:
+        # ==============================================================================
+        # Setup optimization problem
+        # ==============================================================================
+        optProb = Optimization("Aero-Structural Optimization", MP.obj)
 
-        # --- Geometric constraints (depend only on geometry DVs) ---
-        elif "geometry." in conName.lower():
-            addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=geoDesignVariables)
-
-        # --- Lift constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
-        elif "liftdiff" in conName.lower():
-            wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
-            if localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower():
-                wrt.append("dvs.cruise_AOA")
-            addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
-
-        # --- Misc constraints (depend on all dvs) ---
-        else:
-            wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
+        # ==============================================================================
+        # Define design variables
+        # ==============================================================================
+        for dvName, dv in designVariables.items():
             try:
-                flightPointProb.get_val(conName)
-                addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+                value = flightPointProb.get_val(dvName)
             except KeyError:
+                value = performanceProb.get_val(dvName)
+            scale = 1.0 if dv["scaler"] is None else dv["scaler"]
+            optProb.addVarGroup(
+                dvName,
+                nVars=dv["global_size"],
+                value=value,
+                lower=dv["lower"] / scale,
+                upper=dv["upper"] / scale,
+                scale=scale,
+            )
+
+        # ==============================================================================
+        # Define constraints
+        # ==============================================================================
+        structConTypes = ["adjcon", "dvcon", "panellengthcon"]
+
+        for conName, con in constraints.items():
+            # --- Failure constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
+            if "ksfailure" in conName.lower():
+                wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
+                addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+
+            # --- Structural constraints (depend on struct DVs, and maybe geometric DVs) ---
+            elif "adjcon" in conName.lower() or "dvcon" in conName.lower():
+                wrt = structDesignVariables.copy()
+                addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+
+            elif "panellengthcon" in conName.lower():
+                wrt = structDesignVariables + geoDesignVariables
+                addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+
+            # --- Geometric constraints (depend only on geometry DVs) ---
+            elif "geometry." in conName.lower():
+                addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=geoDesignVariables)
+
+            # --- Lift constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
+            elif "liftdiff" in conName.lower():
+                wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
+                if localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower():
+                    wrt.append("dvs.cruise_AOA")
                 addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
 
-    # ==============================================================================
-    # Define objective
-    # ==============================================================================
-    # Let's hope we don't have more than one objective defined
-    for objName, obj in objectives.items():
-        optProb.addObj(objName, scale=obj["scaler"])
+            # --- Misc constraints (depend on all dvs) ---
+            else:
+                wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
+                try:
+                    flightPointProb.get_val(conName)
+                    addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt=wrt)
+                except KeyError:
+                    addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
 
-    optProb.printSparsity(verticalPrint=True)
+        # ==============================================================================
+        # Define objective
+        # ==============================================================================
+        # Let's hope we don't have more than one objective defined
+        for objName, obj in objectives.items():
+            optProb.addObj(objName, scale=obj["scaler"])
 
-    MP.setOptProb(optProb)
+        optProb.printSparsity(verticalPrint=True)
 
-    # ==============================================================================
-    # Setup optimiser and driver
-    # ==============================================================================
-    optimiserMap = {
-        "paroptsl1": "ParOpt",
-        "paroptfilter": "ParOpt",
-        "paroptmma": "ParOpt",
-        "slsqp": "SLSQP",
-        "nlpqlp": "NLPQLP",
-        "snopt": "SNOPT",
-        "ipopt": "IPOPT",
-    }
-    optHistFilename = os.path.join(outputDir, "AeroStructOpt.hst")
-    optimiserOptions = getOptOptions(
-        args.optimiser,
-        outputDir,
-        args.optIter,
-        args.hessianUpdate,
-        args.initPenalty,
-        args.violLimit,
-        args.stepLimit,
-        args.feasibility,
-        args.optimality,
-    )
+        MP.setOptProb(optProb)
 
-    restartDict = None
-    if args.optimiser == "snopt":
-        optimiserOptions["Return work arrays"] = True
-        if args.task == "trim":
-            optimiserOptions["Problem Type"] = "Feasible point"
-            optimiserOptions["Major step limit"] = 10.0
-        if args.timeLimit is not None:
-            # Correct the time limit for the time that has elapsed already
-            args.timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
-            optimiserOptions["Time limit"] = int(args.timeLimit)
-        if args.restartDict is not None:
-            with open(args.restartDict, "rb") as restartFile:
-                restartDict = dill.load(restartFile)
-                optimiserOptions["Start"] = "Hot"
+        # ==============================================================================
+        # Setup optimiser and driver
+        # ==============================================================================
+        optimiserMap = {
+            "paroptsl1": "ParOpt",
+            "paroptfilter": "ParOpt",
+            "paroptmma": "ParOpt",
+            "slsqp": "SLSQP",
+            "nlpqlp": "NLPQLP",
+            "snopt": "SNOPT",
+            "ipopt": "IPOPT",
+        }
+        optHistFilename = os.path.join(outputDir, "AeroStructOpt.hst")
+        optimiserOptions = getOptOptions(
+            args.optimiser,
+            outputDir,
+            args.optIter,
+            args.hessianUpdate,
+            args.initPenalty,
+            args.violLimit,
+            args.stepLimit,
+            args.feasibility,
+            args.optimality,
+        )
 
-
-    optimiser = OPT(optimiserMap[args.optimiser], options=optimiserOptions)
-
-    # ==============================================================================
-    # Run the optimisation
-    # ==============================================================================
-    if args.task == "trim":
-        # Do a basic Newton solve to trim
-        maxTrimIter = 20
-        alphas = {}
-        for fpName in flightPointsDict:
-            alphas[f"{fpName}_AOA"] = flightPointsDict[fpName].alpha
-
-        if globalRank == 0:
-            print("Trimming:")
-            print("=========")
-        for ii in range(maxTrimIter):
-            funcs, _ = MP.obj(alphas)
-            res = []
-            if globalRank == 0:
-                print(f"Trimming Iteration {ii}")
-                print("=========================")
-            for fpName in flightPointsDict:
-                res.append(funcs[f"{fpName}LiftDiff"])
-                if globalRank == 0:
-                    print("=" * 80)
-                    print(f"{fpName}: AoA = {alphas[f'{fpName}_AOA']}, LiftDiff: {res[-1]}")
-                    print("=" * 80)
-            if all(np.abs(res) < 1e-1):
-                if globalRank == 0:
-                    print("=" * 80)
-                    print("Trim solve converged!")
-                    print("=" * 80)
-                writeAeroStructSolution()
-                break
-
-            sens, _ = MP.sens(alphas, funcs)
-            if globalRank == 0:
-                print(f"{sens=}")
-            for fpName in flightPointsDict:
-                update = -funcs[f"{fpName}LiftDiff"] / sens[f"{fpName}LiftDiff"][f"{fpName}_AOA"]
-                update = np.clip(update, -5.0, 5.0).flatten()
-                alphas[f"{fpName}_AOA"] += update
-    elif args.task == "opt":
-        if restartDict is not None:
-            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict, timeLimit=args.timeLimit)
-        else:
-            sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, timeLimit=args.timeLimit)
+        restartDict = None
         if args.optimiser == "snopt":
-            # SNOPT Returns it's working arrays in a restart dictionary that we should save for future hot starts
-            restartDict = sol[-1]
-            sol = sol[0]
+            optimiserOptions["Return work arrays"] = True
+            if args.task == "trim":
+                optimiserOptions["Problem Type"] = "Feasible point"
+                optimiserOptions["Major step limit"] = 10.0
+            if args.timeLimit is not None:
+                # Correct the time limit for the time that has elapsed already
+                args.timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
+                optimiserOptions["Time limit"] = int(args.timeLimit)
+            if args.restartDict is not None:
+                with open(args.restartDict, "rb") as restartFile:
+                    restartDict = dill.load(restartFile)
+                    optimiserOptions["Start"] = "Hot"
+
+        optimiser = OPT(optimiserMap[args.optimiser], options=optimiserOptions)
+
+        # ==============================================================================
+        # Run the optimisation
+        # ==============================================================================
+        if args.task == "trim":
+            # Do a basic Newton solve to trim
+            maxTrimIter = 20
+            alphas = {}
+            for fpName in flightPointsDict:
+                alphas[f"{fpName}_AOA"] = flightPointsDict[fpName].alpha
+
             if globalRank == 0:
-                with open(os.path.join(outputDir, "SNOPTRestart.pkl"), "wb") as f:
-                    dill.dump(restartDict, f)
+                print("Trimming:")
+                print("=========")
+            for ii in range(maxTrimIter):
+                funcs, _ = MP.obj(alphas)
+                res = []
+                if globalRank == 0:
+                    print(f"Trimming Iteration {ii}")
+                    print("=========================")
+                for fpName in flightPointsDict:
+                    res.append(funcs[f"{fpName}LiftDiff"])
+                    if globalRank == 0:
+                        print("=" * 80)
+                        print(f"{fpName}: AoA = {alphas[f'{fpName}_AOA']}, LiftDiff: {res[-1]}")
+                        print("=" * 80)
+                if all(np.abs(res) < 1e-1):
+                    if globalRank == 0:
+                        print("=" * 80)
+                        print("Trim solve converged!")
+                        print("=" * 80)
+                    writeAeroStructSolution()
+                    break
 
-# --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
-outputs = flightPointProb.model.list_outputs(
-    return_format="dict", print_arrays=False, excludes=["*adflow_vol_coords", "*adflow_states"]
-)
-outputData = {}
-for output in outputs:
-    try:
-        data = flightPointProb.get_val(output)
-        if not hasattr(data, "__len__") or len(data) < 10000:
-            outputData[output] = data
-    except TypeError:
-        pass
+                sens, _ = MP.sens(alphas, funcs)
+                if globalRank == 0:
+                    print(f"{sens=}")
+                for fpName in flightPointsDict:
+                    update = -funcs[f"{fpName}LiftDiff"] / sens[f"{fpName}LiftDiff"][f"{fpName}_AOA"]
+                    update = np.clip(update, -5.0, 5.0).flatten()
+                    alphas[f"{fpName}_AOA"] += update
+        elif args.task == "opt":
+            if restartDict is not None:
+                sol = optimiser(
+                    optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict, timeLimit=args.timeLimit
+                )
+            else:
+                sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, timeLimit=args.timeLimit)
+            if args.optimiser == "snopt":
+                # SNOPT Returns it's working arrays in a restart dictionary that we should save for future hot starts
+                restartDict = sol[-1]
+                sol = sol[0]
+                if globalRank == 0:
+                    with open(os.path.join(outputDir, "SNOPTRestart.pkl"), "wb") as f:
+                        dill.dump(restartDict, f)
 
-# Accumulate the data from all flight points on the root proc
-gatheredOutputs = globalComm.gather(outputData, root=0)
-outputData = {}
-if globalRank == 0:
-    for output in gatheredOutputs:
-        outputData.update(output)
+    # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
+    outputs = flightPointProb.model.list_outputs(
+        return_format="dict", print_arrays=False, excludes=["*adflow_vol_coords", "*adflow_states"]
+    )
+    outputData = {}
+    for output in outputs:
+        try:
+            data = flightPointProb.get_val(output)
+            if not hasattr(data, "__len__") or len(data) < 10000:
+                outputData[output] = data
+        except TypeError:
+            pass
 
-# Add outputs from the performance problem
-performanceOutputs = performanceProb.model.list_outputs(return_format="dict", print_arrays=False)
+    # Accumulate the data from all flight points on the root proc
+    gatheredOutputs = globalComm.gather(outputData, root=0)
+    outputData = {}
+    if globalRank == 0:
+        for output in gatheredOutputs:
+            outputData.update(output)
 
-if globalRank == 0:
-    outputData.update(performanceOutputs)
+    # Add outputs from the performance problem
+    performanceOutputs = performanceProb.model.list_outputs(return_format="dict", print_arrays=False)
 
-if MPI.COMM_WORLD.rank == 0:
-    outFileName = os.path.join(outputDir, "Outputs.pkl")
-    with open(outFileName, "wb") as f:
-        dill.dump(outputData, f, protocol=-1)
+    if globalRank == 0:
+        outputData.update(performanceOutputs)
 
-om.n2(flightPointProb, show_browser=False, outfile=os.path.join(localOutputDir, "AeroStruct-N2-Post-Run.html"))
-om.n2(performanceProb, show_browser=False, outfile=os.path.join(outputDir, "Performance-N2-Post-Run.html"))
+    if MPI.COMM_WORLD.rank == 0:
+        outFileName = os.path.join(outputDir, "Outputs.pkl")
+        with open(outFileName, "wb") as f:
+            dill.dump(outputData, f, protocol=-1)
+
+    om.n2(flightPointProb, show_browser=False, outfile=os.path.join(localOutputDir, "AeroStruct-N2-Post-Run.html"))
+    om.n2(performanceProb, show_browser=False, outfile=os.path.join(outputDir, "Performance-N2-Post-Run.html"))
