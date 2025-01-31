@@ -82,7 +82,7 @@ seaLevelLowSpeedPushDown = FlightPoint(
 # Md = Mc + 0.07 as is specified in 14 CFR 25.335(b)(2)
 # (https://www.ecfr.gov/current/title-14/part-25/section-25.335#p-25.335(b)(2))
 
-seaLevelHighSpeedPullUp = FlightPoint(
+cruiseLevelHighSpeedPullUp = FlightPoint(
     "mnver_sealevel_va_pullup",
     loadFactor=2.5,
     fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
@@ -93,7 +93,7 @@ seaLevelHighSpeedPullUp = FlightPoint(
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
-seaLevelHighSpeedPushDown = FlightPoint(
+cruiseLevelHighSpeedPushDown = FlightPoint(
     "mnver_sealevel_va_pushdown",
     loadFactor=-1.0,
     fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
@@ -111,21 +111,21 @@ flightPointSets = {
     "cruise": [standardCruise],
     "mnver_sealevel_va_pullup": [seaLevelLowSpeedPullUp],
     "mnver_sealevel_va_pushdown": [seaLevelLowSpeedPushDown],
-    "mnver_sealevel_vd_pullup": [seaLevelHighSpeedPullUp],
-    "mnver_sealevel_vc_pushdown": [seaLevelHighSpeedPushDown],
+    "mnver_sealevel_vd_pullup": [cruiseLevelHighSpeedPullUp],
+    "mnver_sealevel_vc_pushdown": [cruiseLevelHighSpeedPushDown],
     "3pt": [standardCruise, seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "2pt": [standardCruise, seaLevelLowSpeedPullUp],
     "5pt": [
         standardCruise,
         seaLevelLowSpeedPullUp,
         seaLevelLowSpeedPushDown,
-        seaLevelHighSpeedPullUp,
-        seaLevelHighSpeedPushDown,
+        cruiseLevelHighSpeedPullUp,
+        cruiseLevelHighSpeedPushDown,
     ],
     "maneuverOnly": [
         seaLevelLowSpeedPullUp,
         seaLevelLowSpeedPushDown,
-        seaLevelHighSpeedPullUp,
-        seaLevelHighSpeedPushDown,
+        cruiseLevelHighSpeedPullUp,
+        cruiseLevelHighSpeedPushDown,
     ],
 }
