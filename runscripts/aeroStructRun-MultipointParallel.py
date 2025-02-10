@@ -657,7 +657,7 @@ if args.task in ["trim", "opt", "check"]:
             flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
 
         # --- Geometric constraints ---
-        if not structOnlyOpt:
+        if not structOnlyOpt and args.addGeoDVs:
             # --- Wingbox volume constraint ---
             if args.span or args.taper or args.shape:
                 performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
