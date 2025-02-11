@@ -14,6 +14,7 @@ from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
 from scipy.sparse import coo_matrix
+import numpy as np
 
 # ==============================================================================
 # Extension modules
@@ -137,9 +138,7 @@ def writeOutputs(prob, outputDir, fileName="Outputs"):
     outputDir : _type_
         _description_
     """
-    outputs = prob.model.list_outputs(
-        return_format="dict", print_arrays=False, excludes=["*_vol_coords", "*_states"]
-    )
+    outputs = prob.model.list_outputs(return_format="dict", print_arrays=False, excludes=["*_vol_coords", "*_states"])
     if prob.model.comm.rank == 0:
         print(outputs)
     outputData = {}
@@ -278,3 +277,73 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
 
     # Add the constraint
     optProb.addConGroup(name, size, lower=lb, upper=ub, scale=scale, wrt=wrt, jac=jac, linear=linear)
+
+
+def getTipDisplacement(prob, fpName):
+    # ==============================================================================
+    # Extract tip displacement
+    # ==============================================================================
+
+    FEAAssembler = prob.model.FEAAssembler
+    comm = prob.comm
+
+    chordIndex = wingGeometry["chordIndex"]
+    verticalIndex = wingGeometry["verticalIndex"]
+
+    components = ["SPAR.00", "SPAR.01", "RIB.22", "U_SKIN", "L_SKIN"]
+    nodes = {}
+    for comp in components:
+        compIDs = FEAAssembler.selectCompIDs(include=comp)
+        nodes[comp] = set(FEAAssembler.getGlobalNodeIDsForComps(compIDs, nastranOrdering=False))
+
+    # The node at the front upper corner of the tip rib is the one node that is common to the upper skin, the front spar and the tip rib
+    frontUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
+
+    # Similarly, the node at the rear upper corner of the tip rib is the one node that is common to the upper skin, the rear spar and the tip rib
+    rearUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
+
+    # Now do the same for the lower skin
+    frontLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
+    rearLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
+
+    frontUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(
+        frontUpperNodeGlobalID, nastranOrdering=False
+    )[0]
+    rearUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(
+        rearUpperNodeGlobalID, nastranOrdering=False
+    )[0]
+
+    # To compute the tip rotation we need the node coordinates
+    frontUpperCoord = FEAAssembler.meshLoader.getBDFNodes(frontUpperNodeGlobalID, nastranOrdering=False)
+    rearUpperCoord = FEAAssembler.meshLoader.getBDFNodes(rearUpperNodeGlobalID, nastranOrdering=False)
+
+    # Now retrieve the displacements at these nodes and compute the overall tip displacement and rotation
+    disp = prob.model.get_val(f"{fpName}.solver.u_struct", get_remote=False)
+    frontUpperDisp = None
+    rearUpperDisp = None
+    if frontUpperNodeLocalID != -1:
+        frontUpperDisp = disp[6 * frontUpperNodeLocalID : 6 * frontUpperNodeLocalID + 3]
+    if rearUpperNodeLocalID != -1:
+        rearUpperDisp = disp[6 * rearUpperNodeLocalID : 6 * rearUpperNodeLocalID + 3]
+
+    # broadcast front and rear upper displacements to all procs
+    hasFrontDisp = comm.allgather(frontUpperDisp is not None)
+    hasRearDisp = comm.allgather(rearUpperDisp is not None)
+    frontUpperDisp = comm.bcast(frontUpperDisp, root=np.argmax(hasFrontDisp))
+    rearUpperDisp = comm.bcast(rearUpperDisp, root=np.argmax(hasRearDisp))
+
+    # Compute the tip twist as the change in the angle of the line in the XZ plane between the front and rear upper nodes
+    x1 = frontUpperCoord[chordIndex]
+    z1 = frontUpperCoord[verticalIndex]
+    dx1 = frontUpperDisp[chordIndex]
+    dz1 = frontUpperDisp[verticalIndex]
+    x2 = rearUpperCoord[chordIndex]
+    z2 = rearUpperCoord[verticalIndex]
+    dx2 = rearUpperDisp[chordIndex]
+    dz2 = dz2
+
+    tipZDisp = (dz1 + dz2) / 2
+
+    tipTwist = np.rad2deg(np.arctan2((z2 + dz2) - (z1 + dz1), (x2 + dx2) - (x1 + dx1)) - np.arctan2(z2 - z1, x2 - x1))
+
+    return tipZDisp, tipTwist
