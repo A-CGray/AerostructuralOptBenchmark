@@ -12,7 +12,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "gridFile": meshFile,
         "outputDirectory": outputDir,
         "monitorvariables": ["cpu", "resrho", "resmom", "resturb", "cl", "cd", "yplus", "sepsensor"],
-        "surfaceVariables": ["cp", "vx", "vy", "vz", "mach", "yplus", "cf", "cfx"],
+        "surfaceVariables": ["cp", "vx", "vy", "vz", "mach", "yplus", "cf", "cfx", "sepsensor"],
         "isosurface": {"vx": -0.001, "shock": 1.0},
         "writeTecplotSurfaceSolution": True,
         "writevolumesolution": False,
