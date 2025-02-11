@@ -131,9 +131,15 @@ parser.add_argument("--maxWingLoading", type=float, default=600.0, help="Maximum
 parser.add_argument(
     "--optType",
     type=str,
-    choices=["fuelburn", "structMass"],
+    choices=["fuelburn", "structMass", "pareto"],
     default="fuelburn",
-    help="Type of optimisation to perform, 'fuelburn' for fuelburn minimisation, 'structMass' for structural mass minimisation with only maneuver flight condition",
+    help="Type of optimisation to perform, 'fuelburn' for fuelburn minimisation, 'structMass' for structural mass minimisation with only maneuver flight condition. `pareto` for weighted combination of fuel burn and TOGM, with the weight controlled by the `paretoWeight` input argument",
+)
+parser.add_argument(
+    "--paretoWeight",
+    type=float,
+    default=1.0,
+    help="Weight factor on the fuelburn used in the weighted combination of fuel burn and TOGM used as the objective in the pareto front optimization",
 )
 
 # --- Aero options ---
@@ -679,7 +685,7 @@ if args.task in ["trim", "opt", "check"]:
             # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
             # just satisfies the trim constraints
             performanceProb.model.add_objective("airframeMass.wingMass", scaler=1e-3, cache_linear_solution=True)
-        else:
+        elif args.optType == "fuelburn":
             performanceProb.model.add_objective("TotalFuelBurn", scaler=1e-4, cache_linear_solution=True)
 
 
@@ -784,6 +790,10 @@ for objName in objectives:
 
 for obj in performanceProb.model.get_objectives().values():
     objectives[obj["name"]] = obj
+
+# For the pareto optimisation, the objective comes from neither of the OpenMDAO models
+if args.optType == "pareto":
+    objectives["paretoObj"]  = {"scaler":1.0}
 
 if ptComm.rank == 0:
     print("\n===============================================================================")
@@ -982,6 +992,13 @@ def objCon(funcs, printOK, passThroughFuncs):
     outputs = globalComm.bcast(performanceProb.model.list_outputs(return_format="dict", print_arrays=False), root=0)
     for output in outputs.items():
         funcs[output[1]["prom_name"]] = output[1]["val"]
+
+    # Compute pareto font objective, weighted combination of fuel burn and TOGM
+    if args.optType == "pareto":
+        funcs["paretoObj"] = (
+            args.paretoWeight * funcs["TotalFuelBurn"] / 1e4
+            + (1 - args.paretoWeight) * funcs["TakeoffMass"] / aircraftSpecs["refMTOW"]
+        )
 
     if ptComm.rank == 0 and printOK:
         print("\n==================================================")
