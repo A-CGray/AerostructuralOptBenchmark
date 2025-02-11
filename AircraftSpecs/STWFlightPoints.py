@@ -76,30 +76,35 @@ seaLevelLowSpeedPushDown = FlightPoint(
 # ==============================================================================
 # High-speed manoeuvre conditions
 # ==============================================================================
-# These manoeuvres are performed at the cruise altitude. Following the FAR 25 V-n diagram, the 2.5g pullup is performed
-# at the dive speed and the -1g pushdown is performed at the cruise speed.
-# I'm assuming that the speed is limited by compressibility effects at the cruise altitude and so the dive speed is
-# Md = Mc + 0.07 as is specified in 14 CFR 25.335(b)(2)
+# These manoeuvres are performed at 26,000 ft which is the altitude at which the flight speeds become Mach limited.
+# Following the FAR 25 V-n diagram, the 2.5g pullup is performed at the dive speed and the -1g pushdown is performed at
+# the cruise speed. I'm assuming that the speed is limited by compressibility effects at the cruise altitude and so the
+# dive speed is Md = MMO + 0.07 as is specified in 14 CFR 25.335(b)(2)
 # (https://www.ecfr.gov/current/title-14/part-25/section-25.335#p-25.335(b)(2))
+# The MMO value is from:
+# https://www.flyradius.com/boeing-717/200-specifications-dimensions
 
-cruiseLevelHighSpeedPullUp = FlightPoint(
-    "mnver_sealevel_va_pullup",
+HIGH_SPEED_MANEUVER_ALTITUDE = 7924.8  # 26,000 ft in m
+MMO = 0.82
+
+highAltHighSpeedPullUp = FlightPoint(
+    "mnver_highAlt_vd_pullup",
     loadFactor=2.5,
     fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
     failureGroups=["l_skin", "u_skin", "spar", "rib"],
-    mach=CRUISE_MACH + 0.07,
-    altitude=CRUISE_ALTITUDE,
-    alpha=8.7,
+    mach=MMO + 0.07,
+    altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
+    alpha=5.0,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
-cruiseLevelHighSpeedPushDown = FlightPoint(
-    "mnver_sealevel_va_pushdown",
+highAltHighSpeedPushDown = FlightPoint(
+    "mnver_highAlt_vc_pushdown",
     loadFactor=-1.0,
     fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
     failureGroups=["l_skin"],
     mach=CRUISE_MACH,
-    altitude=CRUISE_ALTITUDE,
+    altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=-5.8,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
@@ -111,21 +116,21 @@ flightPointSets = {
     "cruise": [standardCruise],
     "mnver_sealevel_va_pullup": [seaLevelLowSpeedPullUp],
     "mnver_sealevel_va_pushdown": [seaLevelLowSpeedPushDown],
-    "mnver_sealevel_vd_pullup": [cruiseLevelHighSpeedPullUp],
-    "mnver_sealevel_vc_pushdown": [cruiseLevelHighSpeedPushDown],
+    "mnver_sealevel_vd_pullup": [highAltHighSpeedPullUp],
+    "mnver_sealevel_vc_pushdown": [highAltHighSpeedPushDown],
     "3pt": [standardCruise, seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "2pt": [standardCruise, seaLevelLowSpeedPullUp],
     "5pt": [
         standardCruise,
         seaLevelLowSpeedPullUp,
         seaLevelLowSpeedPushDown,
-        cruiseLevelHighSpeedPullUp,
-        cruiseLevelHighSpeedPushDown,
+        highAltHighSpeedPullUp,
+        highAltHighSpeedPushDown,
     ],
     "maneuverOnly": [
         seaLevelLowSpeedPullUp,
         seaLevelLowSpeedPushDown,
-        cruiseLevelHighSpeedPullUp,
-        cruiseLevelHighSpeedPushDown,
+        highAltHighSpeedPullUp,
+        highAltHighSpeedPushDown,
     ],
 }
