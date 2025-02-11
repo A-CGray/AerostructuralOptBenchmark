@@ -70,6 +70,7 @@ from utils import (
     get_prom_name,
     addConstraintFromOpenMDAO,
     writeOutputs,
+    getTipDisplacement,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -1292,6 +1293,11 @@ if args.task != "check":
                 outputData[output] = data
         except TypeError:
             pass
+
+    # Add wingbox tip displacement to the outputs
+    tipZDisp, tipTwist = getTipDisplacement(flightPointProb, localFlightPoint.name)
+    outputData[f"{localFlightPoint.name}-TipZDisp"] = tipZDisp
+    outputData[f"{localFlightPoint.name}-TipTwist"] = tipTwist
 
     # Accumulate the data from all flight points on the root proc
     gatheredOutputs = globalComm.gather(outputData, root=0)
