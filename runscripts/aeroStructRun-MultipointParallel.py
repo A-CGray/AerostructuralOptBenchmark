@@ -999,7 +999,7 @@ MP.setObjCon(objCon)
 # Create wrapped functions to be used by multipoint sparse
 # ==============================================================================
 def procSetObj(x=None):
-    return runAeroStructAnalyses(x, evalFuncs=dispFuncs, writeSolution=False)
+    return runAeroStructAnalyses(x, evalFuncs=dispFuncs, writeSolution=args.task != "opt")
 
 
 MP.addProcSetObjFunc("all", procSetObj)
@@ -1008,7 +1008,7 @@ MP.addProcSetObjFunc("all", procSetObj)
 # I set writeSolution to true on the sensitivity function so that we only write solution files on major iterations
 # (this assumes you're using SNOPT's derivative-free line search)
 def procSetSens(x=None, funcs=None):
-    return computeSens(x, funcs, gradFuncs=gradFuncs, dispFuncs=dispFuncs, writeSolution=True)
+    return computeSens(x, funcs, gradFuncs=gradFuncs, dispFuncs=dispFuncs, writeSolution=args.task == "opt")
 
 
 MP.addProcSetSensFunc("all", procSetSens)
@@ -1256,7 +1256,6 @@ if args.task != "check":
                         print("=" * 80)
                         print("Trim solve converged!")
                         print("=" * 80)
-                    writeAeroStructSolution()
                     break
 
                 sens, _ = MP.sens(alphas, funcs)
