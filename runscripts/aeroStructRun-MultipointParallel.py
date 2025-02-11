@@ -477,7 +477,7 @@ class AerostructuralFlightPoint(Multipoint):
         # Add lift distribution and slice file output
         if not args.noFiles:
             self.aeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
-            slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 11)
+            slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 51)
             self.aeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
 
         # ==============================================================================
