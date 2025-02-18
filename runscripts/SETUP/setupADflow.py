@@ -12,7 +12,19 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "gridFile": meshFile,
         "outputDirectory": outputDir,
         "monitorvariables": ["cpu", "resrho", "resmom", "resturb", "cl", "cd", "yplus", "sepsensor"],
-        "surfaceVariables": ["cp", "vx", "vy", "vz", "mach", "yplus", "cf", "cfx", "sepsensor"],
+        "surfaceVariables": [
+            "cp",
+            "vx",
+            "vy",
+            "vz",
+            "mach",
+            "yplus",
+            "cf",
+            "cfx",
+            "sepsensor",
+            "sepsensorks",
+            "sepsensorksarea",
+        ],
         "isosurface": {"vx": -0.001, "shock": 1.0},
         "writeTecplotSurfaceSolution": True,
         "writevolumesolution": False,
@@ -54,7 +66,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # Termination Criteria
         "L2Convergence": 1e-14,
         "L2ConvergenceCoarse": 1e-2,
-        "L2ConvergenceRel": 1e-2 if aerostructural else 1e-14,
+        "L2ConvergenceRel": 1e-3 if aerostructural else 1e-14,
         "nCycles": 1000 if aerostructural else 20000,
         # Adjoint parameters
         "adjointMaxIter": 500,
@@ -67,5 +79,12 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "ADPC": False,
         # force integration
         "forcesAsTractions": False,  # Because we're using MELD not RLT
+        # Separation sensor options
+        # Old sepsensor formulation
+        # "sepSensorOffset": -0.1,
+        # New sepsenson formulation
+        "computeSepSensorKs": True,
+        "sepSensorKsRho": 1000.0,
+        "sepSensorKsPhi": 60.0,
     }
     return aero_options

@@ -8,22 +8,24 @@ nas = PBS.nas(group_list="a1607", proc_type="cas", time=runTime, queue_name="lon
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
-meshSizes = [int(1.8e5), int(9.7e5), int(7.8e6)]
-levels = [3, 2, 1]
-cellsPerProc = int(10e3)
+meshSizes = [int(9.7e5)]  # [int(1.8e5), int(9.7e5), int(7.8e6)]
+levels = [2]  # [3, 2, 1]
+cellsPerProc = int(12e3)
 
 runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 for linType in ["Linear", "Nonlinear"]:
-    initDVs = os.path.join(runDir, "DVs", f"FixedPlanformOpt-L2-{linType}.pkl")
+    initDVs = os.path.join(
+        baseOutputDir, "PostOptPolars", f"PostOptTrim-FixedPlanformOpt-L2-{linType}-buffet", "Outputs.pkl"
+    )
     for level, meshSize in zip(levels, meshSizes):
-        idealNumProcs = 3 * meshSize // cellsPerProc
+        idealNumProcs = 5 * meshSize // cellsPerProc
         numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
         numNodes = min(20, numNodes)
         totalProcs = numNodes * nas.ncpus_per_node
 
-        procs = np.array([0.21252905, 0.53634619, 0.25112475])
+        procs = np.array([61.0, 158.0, 70.0, 82.0, 70.0])
         procs /= np.sum(procs)
         procs *= totalProcs
         procs = procs.astype(int)
@@ -36,18 +38,18 @@ for linType in ["Linear", "Nonlinear"]:
         nas.mpiexec = f"mpiexec_mpt -n {totalProcs}"
         nas.requested_number_of_nodes = numNodes
 
-        jobName = f"VariablePlanformOpt-L{level}-{linType}"
+        jobName = f"VariablePlanformOpt-L{level}-{linType}-5pt-buffet"
         outputDir = f"VariablePlanformOpt/{jobName}"
         fullOutputDir = os.path.join(baseOutputDir, outputDir)
         linOption = "--nonlinear" if linType == "Nonlinear" else ""
         runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType fuelburn \\
---initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 \\
+--initPenalty 0.1 --violLimit 0.2 --hessianUpdate 60 \\
 --timeLimit {(runTime*3600 - 600)} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist --sweep --span --taper \\
 --maxWingLoading 600 \\
---flightPointSet 3pt \\
+--flightPointSet 5pt-buffet \\
 --procs {procString} \\
 --aeroLevel {level} --structLevel 1 {linOption} \\
 --initDVs {initDVs} \\

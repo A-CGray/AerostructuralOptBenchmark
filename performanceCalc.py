@@ -504,6 +504,10 @@ class AircraftPerformanceGroup(om.Group):
                 # This is a cruise flight point, so the target lift is the mid-cruise weight
                 flightPointMassVariable = "midCruiseMass"
                 LiftConstraint = LiftConstraintComp(loadFactor=flightPoint.loadFactor)
+            elif "buffet" in flightPoint.name.lower():
+                # Buffet flight points are done at max cruise mass
+                flightPointMassVariable = "cruiseStartMass" if hasCruisePoint else "landingGrossMass"
+                LiftConstraint = LiftConstraintComp(loadFactor=flightPoint.loadFactor)
             else:
                 # This is a maneuver flight point, so the target lift is the landing gross weight + a fraction of the fuel weight
                 hasFuelInput = flightPoint.fuelFraction != 0
@@ -521,6 +525,22 @@ class AircraftPerformanceGroup(om.Group):
 
             if hasFuelInput:
                 self.connect("TotalFuelBurn", f"{name}LiftConstraint.fuelMass")
+
+        # --- Add buffet constraints for any buffet flight points, separated area must be below 4% of planform area ---
+        for flightPoint in self.flightPoints:
+            if "buffet" in flightPoint.name.lower():
+                buffetConstraintComp = om.AddSubtractComp(
+                    output_name=f"{flightPoint.name}BuffetCon",
+                    input_names=[f"{flightPoint.name}SepArea", "wingArea"],
+                    scaling_factors=[1, -0.04],
+                )
+                self.add_subsystem(
+                    f"{flightPoint.name}BuffetCon",
+                    buffetConstraintComp,
+                    promotes_inputs=["*"],
+                    promotes_outputs=["*"],
+                )
+                # self.connect(f"{flightPoint.name}SepArea", f"{flightPoint.name}BuffetCon.SepArea")
 
 
 # Test the performance group derivatives

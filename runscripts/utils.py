@@ -340,7 +340,7 @@ def getTipDisplacement(prob, fpName):
     x2 = rearUpperCoord[chordIndex]
     z2 = rearUpperCoord[verticalIndex]
     dx2 = rearUpperDisp[chordIndex]
-    dz2 = dz2
+    dz2 = rearUpperDisp[verticalIndex]
 
     tipZDisp = (dz1 + dz2) / 2
 

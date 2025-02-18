@@ -21,7 +21,9 @@ for rangeScale in rangeScales:
     if rangeScale != 1:
         for linType in ["Linear", "Nonlinear"]:
             initDVs = os.path.join(runDir, "DVs", f"VariablePlanformOpt-L2-{linType}.pkl")
-            restartDict = os.path.join(baseOutputDir, f"VariablePlanformOpt/VariablePlanformOpt-L2-{linType}-Part3", "SNOPTRestart.pkl")
+            restartDict = os.path.join(
+                baseOutputDir, f"VariablePlanformOpt/VariablePlanformOpt-L2-{linType}-Part3", "SNOPTRestart.pkl"
+            )
             idealNumProcs = 3 * meshSize // cellsPerProc
             numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
             numNodes = min(20, numNodes)

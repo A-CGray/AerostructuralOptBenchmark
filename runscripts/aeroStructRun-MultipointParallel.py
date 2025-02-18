@@ -484,6 +484,7 @@ class AerostructuralFlightPoint(Multipoint):
         # TACS Setup
         # ==============================================================================
         struct_builder.initialize(self.comm)
+        self.FEAAssembler = struct_builder.get_fea_assembler()
 
         structDVMap = setupTACS.buildStructDVDictMap(struct_builder.get_fea_assembler(), args)
         if globalRank == 0:
@@ -642,6 +643,7 @@ flightPointProb.model = AerostructuralFlightPoint()
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm)
 performanceProb.model = performanceCalc.AircraftPerformanceGroup(aircraftSpecs=aircraftSpecs, flightPoints=flightPoints)
+performanceProb.model.set_input_defaults("wingArea", val=wingGeometry["wing"]["planformArea"], units="m**2")
 
 if args.task in ["trim", "opt", "check"]:
     # ==============================================================================
@@ -677,6 +679,13 @@ if args.task in ["trim", "opt", "check"]:
                     scaler=1.0 / args.maxWingLoading,
                     cache_linear_solution=True,
                 )
+    # --- Buffet constraints ---
+    for fpName in flightPointsDict:
+        if "buffet" in fpName.lower():
+            performanceProb.model.add_constraint(
+                f"{fpName}BuffetCon", upper=0.0, scaler=1 / wingGeometry["wing"]["planformArea"]
+            )
+
     # ==============================================================================
     # Setup objective
     # ==============================================================================
@@ -731,6 +740,9 @@ for inpName in performanceProbInputs:
         fpName = inpName[:-4]
         forceName = inpName[-4:]
         dvMap[inpName] = f"{fpName}.aero_post.{forceName.lower()}"
+    elif "SepArea" in inpName:
+        fpName = inpName.replace("SepArea", "")
+        dvMap[inpName] = f"{fpName}.aero_post.sepsensorksarea"
 
 # The DVMap only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
 dvMap = globalComm.bcast(dvMap, root=0)
@@ -793,7 +805,7 @@ for obj in performanceProb.model.get_objectives().values():
 
 # For the pareto optimisation, the objective comes from neither of the OpenMDAO models
 if args.optType == "pareto":
-    objectives["paretoObj"]  = {"scaler":1.0}
+    objectives["paretoObj"] = {"scaler": 1.0}
 
 if ptComm.rank == 0:
     print("\n===============================================================================")
@@ -1135,19 +1147,21 @@ if args.task != "check":
         # ==============================================================================
         # Define design variables
         # ==============================================================================
+
         for dvName, dv in designVariables.items():
             try:
-                value = flightPointProb.get_val(dvName)
+                dv["value"] = flightPointProb.get_val(dvName)
             except KeyError:
-                value = performanceProb.get_val(dvName)
-            scale = 1.0 if dv["scaler"] is None else dv["scaler"]
+                dv["value"] = performanceProb.get_val(dvName)
+            if dv["scaler"] is None:
+                dv["scaler"] = 1.0
             optProb.addVarGroup(
                 dvName,
                 nVars=dv["global_size"],
-                value=value,
-                lower=dv["lower"] / scale,
-                upper=dv["upper"] / scale,
-                scale=scale,
+                value=dv["value"],
+                lower=dv["lower"] / dv["scaler"],
+                upper=dv["upper"] / dv["scaler"],
+                scale=dv["scaler"],
             )
 
         # ==============================================================================
@@ -1178,7 +1192,7 @@ if args.task != "check":
             elif "liftdiff" in conName.lower():
                 wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
                 if localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower():
-                    wrt.append("dvs.cruise_AOA")
+                    wrt.append("cruise_AOA")
                 addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
 
             # --- Misc constraints (depend on all dvs) ---

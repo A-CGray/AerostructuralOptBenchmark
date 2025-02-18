@@ -39,6 +39,38 @@ standardCruise = FlightPoint(
 )
 
 # ==============================================================================
+# Buffet conditions
+# ==============================================================================
+# The aircraft must be buffet free up to MMO and at 1.3g at the cruise speed, Some publications
+# (https://safetyfirst.airbus.com/high-altitude-manual-flying/) make it sound like you need the 0.3g margin at MMO, but
+# I haven't seen this anywhere else.
+# I set these conditions at the aircraft ceiling instead of the cruise altitude to make them more challenging
+# The MMO value is from:
+# https://www.flyradius.com/boeing-717/200-specifications-dimensions
+MAX_ALTITUDE = 11277.6  # 37,000 ft in meters
+MMO = 0.82
+buffetHighLift = FlightPoint(
+    "buffet_high_lift",
+    loadFactor=1.3,
+    fuelFraction=1.0,
+    failureGroups=[],
+    mach=CRUISE_MACH,
+    altitude=MAX_ALTITUDE,
+    alpha=6.5,
+    evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
+)
+buffetHighSpeed = FlightPoint(
+    "buffet_high_speed",
+    loadFactor=1.0,
+    fuelFraction=1.0,
+    failureGroups=[],
+    mach=MMO,
+    altitude=MAX_ALTITUDE,
+    alpha=4.25,
+    evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
+)
+
+# ==============================================================================
 # Low-speed mmaneouvre conditions
 # ==============================================================================
 # The low speed (Va) maneuver flight condition is taken from:
@@ -81,11 +113,8 @@ seaLevelLowSpeedPushDown = FlightPoint(
 # the cruise speed. I'm assuming that the speed is limited by compressibility effects at the cruise altitude and so the
 # dive speed is Md = MMO + 0.07 as is specified in 14 CFR 25.335(b)(2)
 # (https://www.ecfr.gov/current/title-14/part-25/section-25.335#p-25.335(b)(2))
-# The MMO value is from:
-# https://www.flyradius.com/boeing-717/200-specifications-dimensions
 
 HIGH_SPEED_MANEUVER_ALTITUDE = 7924.8  # 26,000 ft in m
-MMO = 0.82
 
 highAltHighSpeedPullUp = FlightPoint(
     "mnver_highAlt_vd_pullup",
@@ -118,6 +147,8 @@ flightPointSets = {
     "mnver_sealevel_va_pushdown": [seaLevelLowSpeedPushDown],
     "mnver_sealevel_vd_pullup": [highAltHighSpeedPullUp],
     "mnver_sealevel_vc_pushdown": [highAltHighSpeedPushDown],
+    "buffet_high_lift": [buffetHighLift],
+    "buffet_high_speed": [buffetHighSpeed],
     "3pt": [standardCruise, seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "2pt": [standardCruise, seaLevelLowSpeedPullUp],
     "5pt": [
@@ -132,5 +163,14 @@ flightPointSets = {
         seaLevelLowSpeedPushDown,
         highAltHighSpeedPullUp,
         highAltHighSpeedPushDown,
+    ],
+    "buffet": [buffetHighLift, buffetHighSpeed],
+    "cruise+buffet": [standardCruise, buffetHighLift, buffetHighSpeed],
+    "5pt-buffet": [
+        standardCruise,
+        seaLevelLowSpeedPullUp,
+        seaLevelLowSpeedPushDown,
+        buffetHighLift,
+        buffetHighSpeed,
     ],
 }
