@@ -124,6 +124,9 @@ parser.add_argument(
 parser.add_argument(
     "--noAitken", action="store_true", help="Don't use Aitken acceleration in the coupled aerostructural solver"
 )
+parser.add_argument(
+    "--aitkenInitFactor", type=float, default=0.5, help="Initial relaxation factor to use in NLBGS solver"
+)
 
 # --- Optimisation options ---
 parser.add_argument("--rangeScale", type=float, default=1.0, help="Factor to scale the mission range by")
@@ -144,8 +147,17 @@ parser.add_argument(
 
 # --- Aero options ---
 parser.add_argument("--aeroLevel", type=int, default=3, choices=[1, 2, 3])
+parser.add_argument("--aeroTol", type=float, default=None, help="Relative tolerance for each NLBGS aero solve")
+parser.add_argument("--aeroMaxIter", type=int, default=None, help="Iteration limit for each NLBGS aero solve")
 
 # --- LDTransfer options ---
+parser.add_argument(
+    "--transferType",
+    type=str,
+    default=None,
+    choices=["linear", "nonlinear"],
+    help="Which version (linear or nonlinear) of MELD to use, by default the version that matches the structural formulation will be chosen",
+)
 parser.add_argument(
     "--transferTo",
     type=str,
@@ -425,6 +437,11 @@ if args.noFiles:
     aero_options["writeTecplotSurfaceSolution"] = False
     aero_options["writevolumesolution"] = False
     aero_options["writesurfacesolution"] = False
+if args.aeroTol is not None:
+    aero_options["L2ConvergenceRel"] = args.aeroTol
+if args.aeroMaxIter is not None:
+    aero_options["nCycles"] = args.aeroMaxIter
+
 warp_options = getIDWarpOptions(aeroMeshFile)
 aero_builder = ADflowBuilder(
     aero_options,
@@ -448,13 +465,19 @@ elif args.transferTo == "skin+spar":
     ldTransferBodies = [{"aero": ["wall"], "struct": ["SKIN", "SPAR"]}]
 
 isym = SPAN_INDEX  # spanwise-symmetry
+if args.transferType is None:
+    useLinearizedMELD = not args.nonlinear
+elif args.transferType.lower() == "linear":
+    useLinearizedMELD = True
+elif args.transferType.lower() == "nonlinear":
+    useLinearizedMELD = False
 
 ldxfer_builder = MeldBuilder(
     aero_builder,
     struct_builder,
     isym=isym,
     n=MELD_MESH_FACTOR,
-    linearized=not args.nonlinear,
+    linearized=useLinearizedMELD,
     body_tags=ldTransferBodies,
 )
 
@@ -602,7 +625,7 @@ class AerostructuralFlightPoint(Multipoint):
             use_aitken=not args.noAitken,
             aitken_initial_factor=0.5,
             aitken_max_factor=1.2,
-            # reraise_child_analysiserror=True,
+            reraise_child_analysiserror=True,
             # use_apply_nonlinear=True, This doesn't work
             restart_from_successful=True,
             err_on_non_converge=True,
