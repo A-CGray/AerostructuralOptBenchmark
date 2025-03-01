@@ -53,12 +53,13 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "useBlockettes": True,
         # ANK Solver Parameters
         "useANKSolver": True,
+        # "nSubiterTurb": 5,
         "ANKCFLCutback": 0.25,
         "ankswitchtol": 1.0,
         "anksecondordswitchtol": 1e-4,
         # "ankcoupledswitchtol": 1e-10,
         # NK Solver Parameters
-        "useNKSolver": True,
+        "useNKSolver": False,
         "nkswitchtol": 1e-10,
         "NKJacobianLag": 5,
         "nkinnerpreconits": 2,
