@@ -41,12 +41,13 @@ standardCruise = FlightPoint(
 # ==============================================================================
 # Buffet conditions
 # ==============================================================================
-# The aircraft must be buffet free up to MMO and at 1.3g at the cruise speed, Some publications
-# (https://safetyfirst.airbus.com/high-altitude-manual-flying/) make it sound like you need the 0.3g margin at MMO, but
-# I haven't seen this anywhere else.
+# The aircraft must be buffet free up to MMO and at 1.3g at the cruise speed,
+# (https://safetyfirst.airbus.com/high-altitude-manual-flying/)
 # I set these conditions at the aircraft ceiling instead of the cruise altitude to make them more challenging
 # The MMO value is from:
 # https://www.flyradius.com/boeing-717/200-specifications-dimensions
+# dive speed is Md = MMO + 0.07 as is specified in 14 CFR 25.335(b)(2)
+# (https://www.ecfr.gov/current/title-14/part-25/section-25.335#p-25.335(b)(2))
 MAX_ALTITUDE = 11277.6  # 37,000 ft in meters
 MMO = 0.82
 buffetHighLift = FlightPoint(
@@ -54,7 +55,7 @@ buffetHighLift = FlightPoint(
     loadFactor=1.3,
     fuelFraction=1.0,
     failureGroups=[],
-    mach=CRUISE_MACH,
+    mach=MMO,
     altitude=MAX_ALTITUDE,
     alpha=6.5,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
@@ -64,7 +65,7 @@ buffetHighSpeed = FlightPoint(
     loadFactor=1.0,
     fuelFraction=1.0,
     failureGroups=[],
-    mach=MMO,
+    mach=MMO+0.07,
     altitude=MAX_ALTITUDE,
     alpha=4.25,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
@@ -161,8 +162,6 @@ flightPointSets = {
     "maneuverOnly": [
         seaLevelLowSpeedPullUp,
         seaLevelLowSpeedPushDown,
-        highAltHighSpeedPullUp,
-        highAltHighSpeedPushDown,
     ],
     "buffet": [buffetHighLift, buffetHighSpeed],
     "cruise+buffet": [standardCruise, buffetHighLift, buffetHighSpeed],

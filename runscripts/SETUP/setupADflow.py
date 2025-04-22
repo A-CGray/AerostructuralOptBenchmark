@@ -86,6 +86,6 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # New sepsenson formulation
         "computeSepSensorKs": True,
         "sepSensorKsRho": 1000.0,
-        "sepSensorKsPhi": 60.0,
+        "sepSensorKsPhi": 80.0,
     }
     return aero_options
