@@ -151,6 +151,7 @@ parser.add_argument("--aeroTol", type=float, default=None, help="Relative tolera
 parser.add_argument("--aeroMaxIter", type=int, default=None, help="Iteration limit for each NLBGS aero solve")
 
 # --- LDTransfer options ---
+parser.add_argument("--nMeld", type=int, default=None, help="Override for number of nodes to use in MELD")
 parser.add_argument(
     "--transferType",
     type=str,
@@ -246,22 +247,26 @@ aeroMeshSpanSpacing = {
     3: 0.60,
 }
 
-# This an approximation of the ratio of structural nodes to aero nodes in the coarsest part of the aero mesh, used to
-# tell MELD how many structural nodes to connect each aero node to. Multiplying this estimate by 4 seems to
-# provide a reasonable N value where the aero forces are not concentrated at the nearest structural nodes.
-MELD_MESH_FACTOR = max(
-    100,
-    int(
-        4
-        * aeroMeshSpanSpacing[args.aeroLevel]
-        * aeroMeshChordSpacing[args.aeroLevel]
-        / structMeshSpacing[args.structLevel] ** 2
-    ),
-)
-# The Super fine aero mesh is particularly prone to negative volumes due to structural deformations so we use a larger
-# lower limit on N for it
-if args.aeroLevel == 1:
-    MELD_MESH_FACTOR = max(200, MELD_MESH_FACTOR)
+
+if args.nMeld is None:
+    # This an approximation of the ratio of structural nodes to aero nodes in the coarsest part of the aero mesh, used to
+    # tell MELD how many structural nodes to connect each aero node to. Multiplying this estimate by 4 seems to
+    # provide a reasonable N value where the aero forces are not concentrated at the nearest structural nodes.
+    MELD_MESH_FACTOR = max(
+        100,
+        int(
+            4
+            * aeroMeshSpanSpacing[args.aeroLevel]
+            * aeroMeshChordSpacing[args.aeroLevel]
+            / structMeshSpacing[args.structLevel] ** 2
+        ),
+    )
+    # The Super fine aero mesh is particularly prone to negative volumes due to structural deformations so we use a larger
+    # lower limit on N for it
+    if args.aeroLevel == 1:
+        MELD_MESH_FACTOR = max(200, MELD_MESH_FACTOR)
+else:
+    MELD_MESH_FACTOR = args.nMeld
 
 
 # ==============================================================================
