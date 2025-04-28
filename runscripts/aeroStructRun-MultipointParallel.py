@@ -661,7 +661,7 @@ class AerostructuralFlightPoint(Multipoint):
                 mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
                 self.dummyAeroSolver.setMesh(mesh)
                 self.dummyAeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
-                slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 11)
+                slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 51)
                 self.dummyAeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
                 # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
                 # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
