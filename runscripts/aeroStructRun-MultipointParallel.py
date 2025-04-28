@@ -635,7 +635,7 @@ class AerostructuralFlightPoint(Multipoint):
             use_aitken=not args.noAitken,
             aitken_initial_factor=0.5,
             aitken_max_factor=1.2,
-            reraise_child_analysiserror=True,
+            # reraise_child_analysiserror=True,
             # use_apply_nonlinear=True, This doesn't work
             restart_from_successful=True,
             err_on_non_converge=True,
@@ -676,7 +676,8 @@ flightPointProb.model = AerostructuralFlightPoint()
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm)
 performanceProb.model = performanceCalc.AircraftPerformanceGroup(aircraftSpecs=aircraftSpecs, flightPoints=flightPoints)
-performanceProb.model.set_input_defaults("wingArea", val=wingGeometry["wing"]["planformArea"], units="m**2")
+if hasCruisePoint:
+    performanceProb.model.set_input_defaults("wingArea", val=wingGeometry["wing"]["planformArea"], units="m**2")
 
 if args.task in ["trim", "opt", "check"]:
     # ==============================================================================
