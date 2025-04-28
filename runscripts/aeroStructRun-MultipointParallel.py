@@ -169,10 +169,10 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-# If we're doing a derivative check, we should at least enable twist and structural DVs
+# If we're doing a derivative check, we should at least enable sweep and structural DVs
 if args.task == "derivCheck":
     args.addGeoDVs = True
-    args.twist = True
+    args.sweep = True
     args.addStructDVs = True
 
 # If we are doing a trim task then we should disable the structural and geometric design variables
@@ -1148,6 +1148,53 @@ if args.task != "check":
                     funcs.update(func)
             funcs = globalComm.bcast(funcs, root=0)
             funcs = objCon(funcs, True, None)
+
+    if args.task == "derivCheck":
+        np.set_printoptions(precision=16, linewidth=200)
+        wrt = geoDesignVariables + aeroDesignVariables  # + ["dv_struct"]
+        fpName = localFlightPoint.name
+        of = [f"{fpName}.aero_post.cl", f"{fpName}.aero_post.cd", f"{fpName}.compliance", f"{fpName}.l_skin_ksFailure"]
+        of = [f for f in of if f in flightPointProbOutputs]
+        origDVs = {}
+        for variable in wrt:
+            origDVs[variable] = flightPointProb.get_val(variable)
+        with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.pkl"), "wb") as pickleFile:
+            with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"), "w") as textFile:
+                if ptComm.rank==0:
+                    print(f"Testing derivatives of {of}, with respect to {wrt}")
+                totalsCheckData = flightPointProb.check_totals(
+                    of=of,
+                    wrt=wrt,
+                    method="cs" if isComplex else "fd",
+                    form="central",
+                    step=1e-200 if isComplex else 1e-3,
+                    step_calc="abs",
+                    out_stream=textFile,
+                    compact_print=True,
+                    rel_err_tol=1e-8 if isComplex else 1e-2,
+                    abs_err_tol=1e6,
+                )
+                for variable in wrt:
+                    flightPointProb.set_val(variable, origDVs[variable])
+                flightPointProb.run_model()
+                if ptComm.rank==0:
+                    print(f"Testing derivatives of {of}, with respect to dv_struct")
+                totalsCheckData.update(
+                    flightPointProb.check_totals(
+                        of=of,
+                        wrt=["dv_struct"],
+                        method="cs" if isComplex else "fd",
+                        form="central",
+                        step=1e-200 if isComplex else 1e-5,
+                        step_calc="rel",
+                        out_stream=textFile,
+                        compact_print=True,
+                        rel_err_tol=1e-8 if isComplex else 1e-2,
+                        abs_err_tol=1e6,
+                        directional=True,
+                    )
+                )
+            dill.dump(totalsCheckData, pickleFile, protocol=-1)
 
     if args.task == "polar":
         alphaPert = 1.0
