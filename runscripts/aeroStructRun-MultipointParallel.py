@@ -108,7 +108,7 @@ parser.add_argument(
     "--task",
     type=str,
     default="check",
-    choices=["writeJigShape", "check", "analysis", "derivCheck", "opt", "trim", "polar"],
+    choices=["writeJigShape", "check", "analysis", "derivCheck", "opt", "trim", "polar", "rawPolar"],
     help="Task to run",
 )
 parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
@@ -119,6 +119,11 @@ parser.add_argument(
     default=[],
     help="Number of processors to use for each flight point, if not specified then processors will be split evenly between flight points",
 )
+
+# --- Polar options ---
+parser.add_argument("--alphaMin", type=float, default=None, help="Angle of attack to start polar at")
+parser.add_argument("--alphaMax", type=float, default=None, help="Angle of attack to end polar at")
+parser.add_argument("--numAlpha", type=int, default=5, help="Number of points to use in polar")
 
 # --- Coupled solver options ---
 parser.add_argument(
@@ -1211,7 +1216,17 @@ if args.task != "check":
                 writeOutputs(
                     flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs"
                 )
-                writeAeroStructSolution()
+    if args.task == "rawPolar":
+        alphaMin = localFlightPoint.alpha-1 if args.alphaMin is None else args.alphaMin
+        alphaMax = localFlightPoint.alpha+1 if args.alphaMax is None else args.alphaMax
+        alphas = np.linspace(args.alphaMin, args.alphaMax, args.numAlpha)
+        for alphaIndex, alpha in enumerate(alphas):
+            # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
+            x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
+            funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
+            writeOutputs(
+                flightPointProb, outputDir=localOutputDir, fileName=f"Alpha-{alphaIndex}-Outputs"
+            )
 
     if args.task in ["check", "opt", "trim"]:
         # ==============================================================================
