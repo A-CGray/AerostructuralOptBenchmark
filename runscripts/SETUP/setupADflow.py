@@ -54,7 +54,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # ANK Solver Parameters
         "useANKSolver": True,
         # "nSubiterTurb": 5,
-        "ANKCFLCutback": 0.25,
+        "ANKCFLCutback": 0.1, # be more aggressive in reducing the CFL when necessary
         "ankswitchtol": 1.0,
         "anksecondordswitchtol": 1e-4,
         # "ankcoupledswitchtol": 1e-10,
@@ -78,11 +78,13 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "adjointL2Convergence": 1e-14,
         "restartAdjoint": True,
         "ADPC": False,
+        "useMatrixFreedrdw": False, # Uses an aseembled matrix for the adjoint solves, takes some time to build but then each adjoint solve is faster
+        "ILUFill":3, # Increase from 2 to 3 to get a better preconditioner for the adjoint solves
         # force integration
         "forcesAsTractions": False,  # Because we're using MELD not RLT
         # Separation sensor options
         # Old sepsensor formulation
-        # "sepSensorOffset": -0.1,
+        "sepSensorOffset": -0.1,
         # New sepsenson formulation
         "computeSepSensorKs": True,
         "sepSensorKsRho": 1000.0,
