@@ -33,6 +33,8 @@ import time
 # External Python modules
 # ==============================================================================
 import numpy as np
+np.set_printoptions(linewidth=800)
+from scipy.optimize import lsq_linear
 from mpi4py import MPI
 import openmdao.api as om
 from mphys import Multipoint, MPhysVariables
@@ -864,6 +866,10 @@ for _, fpFuncName in dvMap.items():
     if fpFuncName in flightPointProbOutputs and fpFuncName not in gradFuncs:
         gradFuncs.append(fpFuncName)
 
+# If we're doing a trim solve and not an optimization then we can remove the ksFailure constraints from the gradFuncs to avoid computing their adjoints
+if args.task == "trim":
+    gradFuncs[:] = [x for x in gradFuncs if not "ksfailure" in x.lower()]
+
 # broadcast gradFuncs to all procs in this set
 gradFuncs = ptComm.bcast(gradFuncs, root=0)
 
@@ -1353,40 +1359,61 @@ if args.task != "check":
         # ==============================================================================
         if args.task == "trim":
             # Do a basic Newton solve to trim
-            maxTrimIter = 20
+            maxTrimIter = 6
             alphas = {}
-            for fpName in flightPointsDict:
-                alphas[f"{fpName}_AOA"] = flightPointsDict[fpName].alpha
+            # Each proc should get the alpha for its flight point then do an allgather to get the right values on every proc
+            alphas[f'{localFlightPoint.name}_AOA'] = localFlightPoint.alpha
+            localAlphas = globalComm.allgather(alphas)
+            for i in range(len(localAlphas)):
+                alphas.update(localAlphas[i])
+            # for fpName in flightPointsDict:
+            #     alphas[f"{fpName}_AOA"] = flightPointsDict[fpName].alpha
 
-            if globalRank == 0:
+            if ptRank == 0:
                 print("Trimming:")
                 print("=========")
             for ii in range(maxTrimIter):
                 funcs, _ = MP.obj(alphas)
                 res = []
-                if globalRank == 0:
+                if ptRank == 0:
                     print(f"Trimming Iteration {ii}")
                     print("=========================")
                 for fpName in flightPointsDict:
                     res.append(funcs[f"{fpName}LiftDiff"])
-                    if globalRank == 0:
+                    if ptRank == 0:
                         print("=" * 80)
                         print(f"{fpName}: AoA = {alphas[f'{fpName}_AOA']}, LiftDiff: {res[-1]}")
                         print("=" * 80)
+                res = np.array(res).flatten()
                 if all(np.abs(res) < 1e-1):
-                    if globalRank == 0:
+                    if ptRank == 0:
                         print("=" * 80)
                         print("Trim solve converged!")
                         print("=" * 80)
                     break
 
                 sens, _ = MP.sens(alphas, funcs)
-                if globalRank == 0:
+                if ptRank == 0:
                     print(f"{sens=}")
-                for fpName in flightPointsDict:
-                    update = -funcs[f"{fpName}LiftDiff"] / sens[f"{fpName}LiftDiff"][f"{fpName}_AOA"]
-                    update = np.clip(update, -5.0, 5.0).flatten()
-                    alphas[f"{fpName}_AOA"] += update
+                # Assemble the jacobian of all the lift differences w.r.t all the alphas
+                jac = np.zeros((len(res), len(alphas)))
+                for rowInd, fpName in enumerate(flightPointsDict):
+                    for colInd, fpName2 in enumerate(flightPointsDict):
+                        if f"{fpName2}_AOA" in sens[f"{fpName}LiftDiff"]:
+                            jac[rowInd, colInd] = sens[f"{fpName}LiftDiff"][f"{fpName2}_AOA"]
+                if ptRank == 0:
+                    print(f"{jac=}")
+
+                # Solve a least squares problem to solve Ax=b with bounds on x
+                update = -lsq_linear(jac, res, bounds=(-1.0,1.0), method="bvls", verbose=2).x
+                if ptRank == 0:
+                    print(f"{update=}")
+
+                for fpInd, fp in enumerate(flightPoints):
+                    # update = -funcs[f"{fpName}LiftDiff"] / sens[f"{fpName}LiftDiff"][f"{fpName}_AOA"]
+                    # update = np.clip(update, -1.0, 1.0).flatten()
+                    alphas[f"{fp.name}_AOA"] += update[fpInd]
+
         elif args.task == "opt":
             if restartDict is not None:
                 sol = optimiser(
