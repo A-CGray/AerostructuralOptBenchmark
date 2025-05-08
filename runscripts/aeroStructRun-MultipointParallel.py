@@ -156,6 +156,7 @@ parser.add_argument(
 parser.add_argument("--aeroLevel", type=int, default=3, choices=[1, 2, 3])
 parser.add_argument("--aeroTol", type=float, default=None, help="Relative tolerance for each NLBGS aero solve")
 parser.add_argument("--aeroMaxIter", type=int, default=None, help="Iteration limit for each NLBGS aero solve")
+parser.add_argument("--sepSensorType", type=str, default="new", choices=["old", "new"])
 
 # --- LDTransfer options ---
 parser.add_argument("--nMeld", type=int, default=None, help="Override for number of nodes to use in MELD")
@@ -778,7 +779,8 @@ for inpName in performanceProbInputs:
         dvMap[inpName] = f"{fpName}.aero_post.{forceName.lower()}"
     elif "SepArea" in inpName:
         fpName = inpName.replace("SepArea", "")
-        dvMap[inpName] = f"{fpName}.aero_post.sepsensorksarea"
+        sepSensorFuncName = "sepsensorksarea" if args.sepSensorType == "new" else "sepsensor"
+        dvMap[inpName] = f"{fpName}.aero_post.{sepSensorFuncName}"
 
 # The DVMap only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
 dvMap = globalComm.bcast(dvMap, root=0)
