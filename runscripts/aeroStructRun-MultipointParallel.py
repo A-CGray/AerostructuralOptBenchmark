@@ -717,11 +717,10 @@ if args.task in ["trim", "opt", "check"]:
                     cache_linear_solution=True,
                 )
     # --- Buffet constraints ---
-    for fpName in flightPointsDict:
-        if "buffet" in fpName.lower():
-            performanceProb.model.add_constraint(
-                f"{fpName}BuffetCon", upper=0.0, scaler=1 / wingGeometry["wing"]["planformArea"]
-            )
+    if "buffet" in localFlightPoint.name.lower():
+        performanceProb.model.add_constraint(
+            f"{localFlightPoint.name}BuffetCon", upper=0.0, scaler=1 / (0.04*wingGeometry["wing"]["planformArea"])
+        )
 
     # ==============================================================================
     # Setup objective
@@ -1290,8 +1289,13 @@ if args.task != "check":
             # --- Lift constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
             elif "liftdiff" in conName.lower():
                 wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
-                if localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower():
+                if (localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower()) or "buffet" in localFlightPoint.name.lower():
                     wrt.append("cruise_AOA")
+                addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
+
+            # --- Buffet constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint)  ---
+            elif "buffetcon" in conName.lower():
+                wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
                 addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
 
             # --- Misc constraints (depend on all dvs) ---
