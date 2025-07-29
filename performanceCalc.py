@@ -565,4 +565,4 @@ if __name__ == "__main__":
     prob.run_model()
     prob.model.list_outputs()
     prob.check_partials(compact_print=True, form="central", step=1e-6)
-    om.n2(prob, show_browser=True)
+    om.n2(prob, show_browser=False)

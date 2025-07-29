@@ -33,6 +33,7 @@ import time
 # External Python modules
 # ==============================================================================
 import numpy as np
+
 np.set_printoptions(linewidth=800)
 from scipy.optimize import lsq_linear
 from mpi4py import MPI
@@ -726,7 +727,7 @@ if args.task in ["trim", "opt", "check"]:
     # --- Buffet constraints ---
     if "buffet" in localFlightPoint.name.lower():
         performanceProb.model.add_constraint(
-            f"{localFlightPoint.name}BuffetCon", upper=0.0, scaler=1 / (0.04*wingGeometry["wing"]["planformArea"])
+            f"{localFlightPoint.name}BuffetCon", upper=0.0, scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"])
         )
 
     # ==============================================================================
@@ -1180,7 +1181,7 @@ if args.task != "check":
             origDVs[variable] = flightPointProb.get_val(variable)
         with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.pkl"), "wb") as pickleFile:
             with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"), "w") as textFile:
-                if ptComm.rank==0:
+                if ptComm.rank == 0:
                     print(f"Testing derivatives of {of}, with respect to {wrt}")
                 totalsCheckData = flightPointProb.check_totals(
                     of=of,
@@ -1197,7 +1198,7 @@ if args.task != "check":
                 for variable in wrt:
                     flightPointProb.set_val(variable, origDVs[variable])
                 flightPointProb.run_model()
-                if ptComm.rank==0:
+                if ptComm.rank == 0:
                     print(f"Testing derivatives of {of}, with respect to dv_struct")
                 totalsCheckData.update(
                     flightPointProb.check_totals(
@@ -1232,16 +1233,14 @@ if args.task != "check":
                     flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs"
                 )
     if args.task == "rawPolar":
-        alphaMin = localFlightPoint.alpha-1 if args.alphaMin is None else args.alphaMin
-        alphaMax = localFlightPoint.alpha+1 if args.alphaMax is None else args.alphaMax
+        alphaMin = localFlightPoint.alpha - 1 if args.alphaMin is None else args.alphaMin
+        alphaMax = localFlightPoint.alpha + 1 if args.alphaMax is None else args.alphaMax
         alphas = np.linspace(args.alphaMin, args.alphaMax, args.numAlpha)
         for alphaIndex, alpha in enumerate(alphas):
             # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
             x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
             funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
-            writeOutputs(
-                flightPointProb, outputDir=localOutputDir, fileName=f"Alpha-{alphaIndex}-Outputs"
-            )
+            writeOutputs(flightPointProb, outputDir=localOutputDir, fileName=f"Alpha-{alphaIndex}-Outputs")
 
     if args.task in ["check", "opt", "trim"]:
         # ==============================================================================
@@ -1296,7 +1295,9 @@ if args.task != "check":
             # --- Lift constraints (depend on struct dvs, geometry dvs, and the AoA DV for the relevant flightPoint) ---
             elif "liftdiff" in conName.lower():
                 wrt = structDesignVariables + geoDesignVariables + aeroDesignVariables
-                if (localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower()) or "buffet" in localFlightPoint.name.lower():
+                if (
+                    localFlightPoint.fuelFraction != 0.0 and "cruise" not in localFlightPoint.name.lower()
+                ) or "buffet" in localFlightPoint.name.lower():
                     wrt.append("cruise_AOA")
                 addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=wrt)
 
@@ -1375,7 +1376,7 @@ if args.task != "check":
             maxTrimIter = 6
             alphas = {}
             # Each proc should get the alpha for its flight point then do an allgather to get the right values on every proc
-            alphas[f'{localFlightPoint.name}_AOA'] = localFlightPoint.alpha
+            alphas[f"{localFlightPoint.name}_AOA"] = localFlightPoint.alpha
             localAlphas = globalComm.allgather(alphas)
             for i in range(len(localAlphas)):
                 alphas.update(localAlphas[i])
@@ -1418,7 +1419,7 @@ if args.task != "check":
                     print(f"{jac=}")
 
                 # Solve a least squares problem to solve Ax=b with bounds on x
-                update = -lsq_linear(jac, res, bounds=(-1.0,1.0), method="bvls", verbose=2).x
+                update = -lsq_linear(jac, res, bounds=(-1.0, 1.0), method="bvls", verbose=2).x
                 if ptRank == 0:
                     print(f"{update=}")
 
