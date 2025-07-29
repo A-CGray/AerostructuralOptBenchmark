@@ -538,18 +538,26 @@ class AerostructuralFlightPoint(Multipoint):
         # ==============================================================================
         # Mesh and geometry setup
         # ==============================================================================
-        self.add_subsystem("mesh_aero", aero_builder.get_mesh_coordinate_subsystem())
-        self.add_subsystem("mesh_struct", struct_builder.get_mesh_coordinate_subsystem())
+        disciplineVariables = {"aero": MPhysVariables.Aerodynamics.Surface, "struct": MPhysVariables.Structures}
+        builders = {"aero": aero_builder, "struct": struct_builder}
+
+        # Setup mesh components for each discipline
+        for dName in disciplineVariables:
+            self.add_subsystem(f"mesh_{dName}", builders[dName].get_mesh_coordinate_subsystem())
+
         geometryComp = OM_DVGEOCOMP(file=ffdFile, type="ffd", options={"isComplex": isComplex})
         self.add_subsystem("geometry", geometryComp)
 
-        # Setup mesh components for each discipline
-        for discipline in ["aero", "struct"]:
+        # Connect each discipline's mesh coordinates to the geometry component
+        for dName, discipline in disciplineVariables.items():
+
             # Tell the geometry component that there will be a set of coordinates for the discipline
-            geometryComp.nom_add_discipline_coords(discipline)
-        # Connect the original mesh coordinates as an input to the geometry component
-        self.connect(f"mesh_aero.{MPhysVariables.Aerodynamics.Surface.Mesh.COORDINATES}", "geometry.x_aero_in")
-        self.connect(f"mesh_struct.{MPhysVariables.Structures.Mesh.COORDINATES}", "geometry.x_struct_in")
+            geometryComp.nom_add_discipline_coords(discipline.Geometry)
+
+            # Connect the original mesh coordinates as an input to the geometry component
+            self.connect(
+                f"mesh_{dName}.{discipline.Mesh.COORDINATES}", f"geometry.{discipline.Geometry.COORDINATES_INPUT}"
+            )
 
         # --- initialize MELD ---
         # Find the nodes at the intersections of the spars and ribs and include them in the LDTransfer
@@ -575,15 +583,14 @@ class AerostructuralFlightPoint(Multipoint):
             ),
         )
 
-        # Connect geometry to aero and struct meshes
-        # Aero
-        src = "geometry.x_aero0"
-        target = f"{scenarioName}.{MPhysVariables.Aerodynamics.Surface.COORDINATES_INITIAL}"
-        self.connect(src, target)
-        # Structures
-        src = "geometry.x_struct0"
-        target = f"{scenarioName}.{MPhysVariables.Structures.COORDINATES}"
-        self.connect(src, target)
+        # Connect geometry to discipline coordinates in the aerostructural scenario
+        for dName, discipline in disciplineVariables.items():
+            src = f"geometry.{discipline.Geometry.COORDINATES_OUTPUT}"
+            if dName == "aero":
+                target = f"{scenarioName}.{discipline.COORDINATES_INITIAL}"
+            else:
+                target = f"{scenarioName}.{discipline.COORDINATES}"
+            self.connect(src, target)
 
         self.connect("dv_struct", f"{scenarioName}.dv_struct")
 
