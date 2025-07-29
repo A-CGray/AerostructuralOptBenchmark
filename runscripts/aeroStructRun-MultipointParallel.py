@@ -747,6 +747,7 @@ if args.task in ["trim", "opt", "check"]:
 # ==============================================================================
 # Setup the aerostructural model for each flight point and get the names of their outputs
 flightPointProb.setup(force_alloc_complex=isComplex, mode="rev")
+flightPointProb.final_setup()  # Need to call this so that sizes of inputs and outputs are figured out correctly, otherwise calling `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
 tmp = ptComm.bcast(flightPointProb.model.list_outputs(out_stream=None), root=0)
 flightPointProbOutputs = {}
 for output in tmp:

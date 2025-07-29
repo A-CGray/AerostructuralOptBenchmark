@@ -193,11 +193,11 @@ def getOutputDir():
 # Function for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
 def get_prom_name(model, abs_name):
-    abs2prom = model._var_abs2prom
+    abs2prom = model._resolver._abs2prom
     if abs_name in abs2prom["input"]:
-        return abs2prom["input"][abs_name]
+        return abs2prom["input"][abs_name][0]
     elif abs_name in abs2prom["output"]:
-        return abs2prom["output"][abs_name]
+        return abs2prom["output"][abs_name][0]
     else:
         return abs_name
 
