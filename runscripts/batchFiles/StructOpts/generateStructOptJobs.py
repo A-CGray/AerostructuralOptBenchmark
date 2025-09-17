@@ -14,7 +14,7 @@ for linType in ["Linear", "Nonlinear"]:
     for level in levels:
         numNodes = 1
 
-        nas.mpiexec = f"mpiexec_mpt -n {numNodes*nas.ncpus_per_node}"
+        nas.mpiexec = f"mpiexec_mpt -n {numNodes * nas.ncpus_per_node}"
         nas.requested_number_of_nodes = numNodes
 
         jobName = f"StructOpt-L{level}-{linType}"

@@ -49,7 +49,7 @@ for rangeScale in rangeScales:
             runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType fuelburn \\
 --initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 \\
---timeLimit {(runTime*3600 - 600)} \\
+--timeLimit {(runTime * 3600 - 600)} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist --sweep --span --taper \\
 --maxWingLoading 600 \\

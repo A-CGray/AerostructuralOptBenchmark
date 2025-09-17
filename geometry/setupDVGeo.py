@@ -30,7 +30,6 @@ from wingGeometry import wingGeometry  # noqa: E402
 
 
 def setupDVGeo(args, DVGeo):
-
     spanIndex = wingGeometry["spanIndex"]
     chordIndex = wingGeometry["chordIndex"]
     verticalIndex = wingGeometry["verticalIndex"]
@@ -138,7 +137,6 @@ def setupDVGeo(args, DVGeo):
     # single DV, keys are the local ID of each node to move, values are the direction and magnitude of the motion of
     # that node in response to the DV.
     if args.shape:
-
         shapes = []
         ffdLocalInds = DVGeo.getLocalIndex(0)
 

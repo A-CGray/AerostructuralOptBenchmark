@@ -33,8 +33,6 @@ import time
 # External Python modules
 # ==============================================================================
 import numpy as np
-
-np.set_printoptions(linewidth=800)
 from scipy.optimize import lsq_linear
 from mpi4py import MPI
 import openmdao.api as om
@@ -86,8 +84,10 @@ from STWSpecs import aircraftSpecs  # noqa: E402
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
-# --- Get the start time ---
+# --- Get the start time, this is used later for correcting the time limit passed to the optimiser ---
 startTime = time.time()
+
+np.set_printoptions(linewidth=800)
 
 
 # --- Get some info on the wing geometry ---
@@ -551,7 +551,6 @@ class AerostructuralFlightPoint(Multipoint):
 
         # Connect each discipline's mesh coordinates to the geometry component
         for dName, discipline in disciplineVariables.items():
-
             # Tell the geometry component that there will be a set of coordinates for the discipline
             geometryComp.nom_add_discipline_coords(discipline.Geometry)
 
@@ -878,7 +877,7 @@ for _, fpFuncName in dvMap.items():
 
 # If we're doing a trim solve and not an optimization then we can remove the ksFailure constraints from the gradFuncs to avoid computing their adjoints
 if args.task == "trim":
-    gradFuncs[:] = [x for x in gradFuncs if not "ksfailure" in x.lower()]
+    gradFuncs[:] = [x for x in gradFuncs if "ksfailure" not in x.lower()]
 
 # broadcast gradFuncs to all procs in this set
 gradFuncs = ptComm.bcast(gradFuncs, root=0)

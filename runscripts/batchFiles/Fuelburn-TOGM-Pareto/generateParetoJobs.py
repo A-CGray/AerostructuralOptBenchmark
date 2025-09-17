@@ -48,7 +48,7 @@ for weight in paretoWeights:
             runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType pareto --paretoWeight {weight} \\
 --initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 --stepLimit 0.01 \\
---timeLimit {(runTime*3600 - 600)} \\
+--timeLimit {(runTime * 3600 - 600)} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist --sweep --span --taper \\
 --maxWingLoading 600 \\
