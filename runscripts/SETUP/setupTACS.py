@@ -389,6 +389,10 @@ def setup_tacs_assembler(fea_assembler, args):
                 upper=defaultStiffenerPitchMax,
                 scale=defaultStiffenerPitchScale,
             )
+    massCounter = 0
+    for elemInd in fea_assembler.meshLoader.bdfInfo.masses:
+        fea_assembler.assignMassDV(f"FuelMass-{massCounter}", elemInd)
+        massCounter += 1
 
 
 def problem_setup(
@@ -414,11 +418,14 @@ def problem_setup(
         problem.nonlinearSolver.innerSolver.setOptions(newtonOptions)
 
     # Add TACS Functions
-    problem.addFunction("mass", functions.StructuralMass)
-    for massGroup in ["spar", "u_skin", "l_skin", "rib"]:
-        compIDs = fea_assembler.selectCompIDs(include=massGroup.upper())
+    massGroups = ["SPAR", "U_SKIN", "L_SKIN", "RIB"]
+    # Even for the total mass we only want to include the main wingbox components so that we don't include the concentrated fuel masses
+    compIDs = fea_assembler.selectCompIDs(include=massGroups)
+    problem.addFunction("mass", functions.StructuralMass, compIDs=compIDs)
+    for massGroup in massGroups:
+        compIDs = fea_assembler.selectCompIDs(include=massGroup)
         problem.addFunction(
-            f"{massGroup}_mass",
+            f"{massGroup.lower()}_mass",
             functions.StructuralMass,
             compIDs=compIDs,
         )

@@ -45,7 +45,7 @@ def getAeroMeshPath(level: int) -> str:
 
 
 def getStructMeshPath(level: int, order: int) -> str:
-    return os.path.join(THIS_FILE_DIR, f"../struct/wingbox-L{level}-Order{order}.bdf")
+    return os.path.join(THIS_FILE_DIR, f"../struct/wingbox-L{level}-Order{order}-wRBEs.bdf")
 
 
 def getFFDPath(level: str):
@@ -303,8 +303,8 @@ def getTipDisplacement(prob, fpName):
     rearUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
 
     # Now do the same for the lower skin
-    frontLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
-    rearLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
+    # frontLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
+    # rearLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
 
     frontUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(
         frontUpperNodeGlobalID, nastranOrdering=False
@@ -347,3 +347,63 @@ def getTipDisplacement(prob, fpName):
     tipTwist = np.rad2deg(np.arctan2((z2 + dz2) - (z1 + dz1), (x2 + dx2) - (x1 + dx1)) - np.arctan2(z2 - z1, x2 - x1))
 
     return tipZDisp, tipTwist
+
+
+class ArrayMergeComp(om.ExplicitComponent):
+    """
+    Component to merge a list of arrays into a single array, potentially with non-contiguous indices
+
+    Given arrays, a, b, c, this compoent basically computes:
+
+    d = np.zeros(len(a) + len(b) + len(c))
+    d[aInds] += a
+    d[bInds] += b
+    d[cInds] += c
+
+    Parameters
+    ----------
+    arraySizes : list
+        List of sizes of each array to be merged
+    """
+
+    def initialize(self):
+        self.options.declare("arraySizes", types=list, desc="List of sizes of each array to be merged", default=None)
+        self.options.declare(
+            "arrayInds", types=list, desc="List of index arrays for each array to be merged", default=None
+        )
+        self.options.declare("outSize", types=int, desc="Size of the output array", default=None)
+
+    def setup(self):
+        opt = self.options
+        if opt["arraySizes"] is not None:
+            self.arraySizes = opt["arraySizes"]
+            self.numArrays = len(opt["arraySizes"])
+            self.inds = []
+            start = 0
+            for size in opt["arraySizes"]:
+                self.inds.append(np.arange(start, start + size))
+                start += size
+        elif opt["arrayInds"] is not None:
+            self.numArrays = len(opt["arrayInds"])
+            self.inds = opt["arrayInds"]
+            self.arraySizes = [len(inds) for inds in self.inds]
+        else:
+            raise ValueError("Either arraySizes or arrayInds must be provided")
+        if opt["outSize"] is not None:
+            self.outSize = opt["outSize"]
+        else:
+            self.outSize = max([max(inds) for inds in self.inds]) + 1
+
+        for i in range(self.numArrays):
+            self.add_input(f"in{i}", shape=len(self.inds[i]))
+        self.add_output("out", shape=self.outSize)
+
+        for i in range(self.numArrays):
+            rows = self.inds[i]
+            cols = np.arange(len(self.inds[i]))
+            self.declare_partials("out", f"in{i}", rows=rows, cols=cols, val=1.0)
+
+    def compute(self, inputs, outputs):
+        outputs["out"] = 0.0
+        for i in range(self.numArrays):
+            outputs["out"][self.inds[i]] += inputs[f"in{i}"]
