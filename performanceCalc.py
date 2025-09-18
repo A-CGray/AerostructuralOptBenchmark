@@ -11,12 +11,16 @@ Basic aircraft mission performance calculations
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
+import os
 
 # ==============================================================================
 # External Python modules
 # ==============================================================================
 import openmdao.api as om
 import numpy as np
+import jax
+import jax.numpy as jnp
+
 
 # ==============================================================================
 # Extension modules
@@ -25,6 +29,11 @@ import numpy as np
 # ==============================================================================
 # Individual components
 # ==============================================================================
+
+jax.config.update("jax_enable_x64", True)  # Make jax use double precision
+# Need to set XLA_PYTHON_CLIENT_PREALLOCATE=false otherwise every instance of jax will try to pre-allocate 75% of GPU
+# memory (even when not using GPU)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 # --- Mass calculation components ---
@@ -317,6 +326,59 @@ class FuelTankUsageComp(om.ExplicitComponent):
         #     print(f"fuelTankUsage = {outputs['fuelTankUsage'][0]: 11.7e}")
 
 
+class FuelDistributionComp(om.JaxExplicitComponent):
+    """Given the total fuel mass required to be stored in the wingbox, and the volumes of each rib bay, compute the mass
+    of fuel in each bay and the fraction of the total fuel volume used
+    """
+
+    def initialize(self):
+        self.options.declare("fuelDensity", types=float, desc="Density of fuel")
+        self.options.declare(
+            "wingboxVolumeFraction", types=float, desc="Fraction of each rib bay assumed to be fuel tank"
+        )
+        self.options.declare("auxTankVolume", types=float, desc="Volume of auxiliary fuel tanks not in wingbox")
+
+    def setup(self):
+        self.add_input("bayVolumes", shape_by_conn=True, units="m**3")
+        self.add_input("fuelMass", units="kg")
+        self.add_output("bayFuelMasses", copy_shape="bayVolumes", units="kg")
+        self.add_output("fuelTankUsage")
+
+    def get_self_statics(self):
+        return (self.options["fuelDensity"], self.options["wingboxVolumeFraction"], self.options["auxTankVolume"])
+
+    def compute_primal(self, bayVolumes, fuelMass):
+        volFrac = self.options["wingboxVolumeFraction"]
+        auxTankVol = self.options["auxTankVolume"]
+        totalVolume = jnp.sum(bayVolumes) * volFrac * 2.0 + auxTankVol
+        fuelVolume = (fuelMass / self.options["fuelDensity"])[0]
+        fuelTankUsage = fuelVolume / totalVolume
+
+        # The calculations below are a bit confusing, they could be done more simply with a for loop and some if
+        # statements but then the code wouldn't be jittable/differentiable by jax
+
+        # Start by assuming all bays are full
+        bayFullFuelMasses = jnp.array(bayVolumes * volFrac * self.options["fuelDensity"]) * 2
+
+        # Track the cumulative sum of fuel in the bays (flip the array so we are effectively filling from the wing tip inwards)
+        cumulativeFuelMasses = jnp.flip(jnp.cumsum(jnp.flip(bayFullFuelMasses)))
+
+        # Compute how much fuel is left to store if we fill up to each bay
+        remainingFuelMass = fuelMass - cumulativeFuelMasses
+
+        # Now, if the remaining fuel mass is less than zero, then we don't need to fill this bay completely, so we can
+        # add the negative remaining mass to the full bay mass to get the actual mass we need in that bay, if any bays
+        # are then left with a negative mass, we don't need to fill them at all, so we set them to zero. Then remember
+        # to divide by 2 to get the mass in a single wing
+        bayFuelMasses = 0.5 * jnp.where(
+            remainingFuelMass < 0.0,
+            jnp.clip(bayFullFuelMasses + remainingFuelMass, min=0.0),
+            bayFullFuelMasses,
+        )
+
+        return bayFuelMasses, fuelTankUsage
+
+
 def computeWingLoading(wingArea, MTOM):
     """Compute the wing loading of an aircraft
 
@@ -565,4 +627,30 @@ if __name__ == "__main__":
     prob.run_model()
     prob.model.list_outputs()
     prob.check_partials(compact_print=True, form="central", step=1e-6)
+    om.n2(prob, show_browser=False)
+
+    # Now test the FuelDistribution component
+    prob = om.Problem()
+
+    class Group(om.Group):
+        def setup(self):
+            inputComp = om.IndepVarComp()
+            inputComp.add_output("bayVolumes", np.linspace(0.6, 0.05, 22), units="m**3")
+            inputComp.add_output("fuelMass", 6000.0, units="kg")
+            self.add_subsystem("inputs", inputComp, promotes=["*"])
+            self.add_subsystem(
+                "model",
+                FuelDistributionComp(
+                    fuelDensity=aircraftSpecs["fuelDensity"],
+                    wingboxVolumeFraction=aircraftSpecs["wingboxFuelVolumeFraction"],
+                    auxTankVolume=aircraftSpecs["auxFuelVolume"],
+                ),
+                promotes=["*"],
+            )
+
+    prob.model = Group()
+    prob.setup()
+    prob.run_model()
+    prob.model.list_outputs()
+    prob.check_partials(compact_print=True, form="central", step=1e-8)
     om.n2(prob, show_browser=False)

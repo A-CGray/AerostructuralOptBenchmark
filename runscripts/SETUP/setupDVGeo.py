@@ -45,7 +45,6 @@ def setupDVGeo(
         addGeoConstraints = True
 
     DVGeo = DVGeoComp.nom_getDVGeo()
-    DVCon = DVGeoComp.nom_getDVCon()
 
     spanIndex = wingGeometry["spanIndex"]
     chordIndex = wingGeometry["chordIndex"]
@@ -243,68 +242,88 @@ def setupDVGeo(
     # ==============================================================================
     # Set up the DVConstraints
     # ==============================================================================
-    # We can only add geometric constraints if we have a triangulated surface
-    if len(DVCon.surfaces) > 0 and addGeoConstraints:
-        chordDir = np.zeros(3)
-        chordDir[chordIndex] = -1.0
-        projectionDir = np.zeros(3)
-        projectionDir[verticalIndex] = 1.0
+    chordDir = np.zeros(3)
+    chordDir[chordIndex] = -1.0
+    projectionDir = np.zeros(3)
+    projectionDir[verticalIndex] = 1.0
 
-        # --- Wingbox volume ---
-        # This will be used to constrain the volume of the wingbox to be greater than the required fuel volume
-        LESparCoords = wingGeometry["wingbox"]["LESparCoords"]
-        TESparCoords = wingGeometry["wingbox"]["TESparCoords"]
+    # --- Wingbox volume ---
+    # We'll add a volume constraint for each rib bay in the wingbox
+    LESparCoords = wingGeometry["wingbox"]["LESparCoords"]
+    TESparCoords = wingGeometry["wingbox"]["TESparCoords"]
+    numRibsCentrebody = wingGeometry["wingbox"]["numRibsCentrebody"]
+    numRibsOuter = wingGeometry["wingbox"]["numRibsOuter"]
+
+    bayCount = 0
+
+    # First the bays between the root and the SOB
+    spanFrac = np.linspace(0, 1, numRibsCentrebody)
+    for ii in range(numRibsCentrebody - 1):
+        ribLE = LESparCoords[0] + spanFrac[ii] * (LESparCoords[1] - LESparCoords[0])
+        ribTE = TESparCoords[0] + spanFrac[ii] * (TESparCoords[1] - TESparCoords[0])
+        nextRibLE = LESparCoords[0] + spanFrac[ii + 1] * (LESparCoords[1] - LESparCoords[0])
+        nextRibTE = TESparCoords[0] + spanFrac[ii + 1] * (TESparCoords[1] - TESparCoords[0])
         DVGeoComp.nom_addVolumeConstraint(
-            "WingboxVolume", LESparCoords, TESparCoords, nSpan=20, nChord=20, scaled=False
+            f"RibBay-Volume_{bayCount}",
+            [ribLE, nextRibLE],
+            [ribTE, nextRibTE],
+            nSpan=3,
+            nChord=20,
+            scaled=False,
         )
+        bayCount += 1
 
-        # --- Area constraint ---
-        # This will be used to compute and potentially constrain the wing loading
-        directions = ["x", "y", "z"]
-        DVGeoComp.nom_addProjectedAreaConstraint("WingArea", axis=directions[verticalIndex], scaled=False)
+    # Then the bays between the SOB and the tip
+    spanFrac = np.linspace(0, 1, numRibsOuter + 1)
+    for ii in range(numRibsOuter):
+        ribLE = LESparCoords[1] + spanFrac[ii] * (LESparCoords[2] - LESparCoords[1])
+        ribTE = TESparCoords[1] + spanFrac[ii] * (TESparCoords[2] - TESparCoords[1])
+        nextRibLE = LESparCoords[1] + spanFrac[ii + 1] * (LESparCoords[2] - LESparCoords[1])
+        nextRibTE = TESparCoords[1] + spanFrac[ii + 1] * (TESparCoords[2] - TESparCoords[1])
+        DVGeoComp.nom_addVolumeConstraint(
+            f"RibBay-Volume_{bayCount}",
+            [ribLE, nextRibLE],
+            [ribTE, nextRibTE],
+            nSpan=5,
+            nChord=20,
+            scaled=False,
+        )
+        bayCount += 1
 
-        if args.shape:
-            # --- Leading/Trailing edge constraints ---
-            # DVGeoComp.nom_add_LETEConstraint("LEConstraint", 0, "iLow")
-            # DVGeoComp.nom_add_LETEConstraint("TEConstraint", 0, "iHigh")
+        if addGeoConstraints:
+            # --- Area constraint ---
+            # This will be used to compute and potentially constrain the wing loading
+            directions = ["x", "y", "z"]
+            DVGeoComp.nom_addProjectedAreaConstraint("WingArea", axis=directions[verticalIndex], scaled=False)
 
-            # top.add_constraint(f"{geoCompName}.LEConstraint", equals=0.0, scaler=1.0, linear=True)
-            # top.add_constraint(f"{geoCompName}.TEConstraint", equals=0.0, scaler=1.0, linear=True)
+            if args.shape:
+                # --- Leading edge radius constraint ---
+                LECoords = wingGeometry["wing"]["LECoords"]
+                LECoords[:, chordIndex] += 2e-2  # Need to be slightly behind the LE
+                LECoords[0, spanIndex] += 1e-4  # Need to be in from the symmetry plane
+                try:  # This fails on the super coarse mesh so we'll just ignore it
+                    DVGeoComp.nom_addLERadiusConstraints(
+                        "LERadius", LECoords, nSpan=20, axis=projectionDir, chordDir=chordDir
+                    )
+                    top.add_constraint(f"{geoCompName}.LERadius", lower=0.9)
+                except Exception:
+                    pass
 
-            # --- Leading edge radius constraint ---
-            LECoords = wingGeometry["wing"]["LECoords"]
-            LECoords[:, chordIndex] += 2e-2  # Need to be slightly behind the LE
-            LECoords[0, spanIndex] += 1e-4  # Need to be in from the symmetry plane
-            try:  # This fails on the super coarse mesh so we'll just ignore it
-                DVGeoComp.nom_addLERadiusConstraints(
-                    "LERadius", LECoords, nSpan=20, axis=projectionDir, chordDir=chordDir
-                )
-                top.add_constraint(f"{geoCompName}.LERadius", lower=0.9)
-            except Exception:
-                pass
+                # --- Thickness constraints ---
+                # We will add two forms of thickness constraints here:
 
-            # --- Thickness constraints ---
-            # We will add two forms of thickness constraints here:
+                # First, thickness constraints along the leading and trailing edge spars that limit how much the optimiser can
+                # reduce their height (so there's still space to mount actuators etc to them)
+                DVGeoComp.nom_addThicknessConstraints1D("LESparThickness", LESparCoords, nCon=20, axis=projectionDir)
+                DVGeoComp.nom_addThicknessConstraints1D("TESparThickness", TESparCoords, nCon=20, axis=projectionDir)
+                top.add_constraint(f"{geoCompName}.LESparThickness", lower=0.75)
+                top.add_constraint(f"{geoCompName}.TESparThickness", lower=0.75)
 
-            # First, thickness constraints along the leading and trailing edge spars that limit how much the optimiser can
-            # reduce their height (so there's still space to mount actuators etc to them)
-            DVGeoComp.nom_addThicknessConstraints1D("LESparThickness", LESparCoords, nCon=20, axis=projectionDir)
-            DVGeoComp.nom_addThicknessConstraints1D("TESparThickness", TESparCoords, nCon=20, axis=projectionDir)
-            top.add_constraint(f"{geoCompName}.LESparThickness", lower=0.75)
-            top.add_constraint(f"{geoCompName}.TESparThickness", lower=0.75)
-
-            # Second a grid of constraints over the region between the wingbox trailing edge and the wing trailing edge,
-            # to stop the optimiser thinning out the trailing edge of the wing too much, which is a common issue
-            TECoords = wingGeometry["wing"]["TECoords"]
-            TECoords[:, chordIndex] -= 1e-2  # Need to be slightly ahead of the TE
-            TECoords[0, spanIndex] += 1e-2  # Need to be in from the symmetry plane
-            TECoords[-1, spanIndex] -= 1e-2  # Need to be in from the tip
-            DVGeoComp.nom_addThicknessConstraints2D("TEThickness", TESparCoords, TECoords, nSpan=20, nChord=20)
-            top.add_constraint(f"{geoCompName}.TEThickness", lower=0.5)
-
-        if top.comm.rank == 0 and addGeoConstraints:
-            print("Added DV constraints")
-            DVCon.writeTecplot("DVConstraints.dat")
-            DVCon.writeSurfaceTecplot("DVConstraintsSurface.dat")
-            DVCon.writeSurfaceSTL("DVConstraintsSurface.stl")
-            DVGeo.writeRefAxes("FFDRefAxis")
+                # Second a grid of constraints over the region between the wingbox trailing edge and the wing trailing edge,
+                # to stop the optimiser thinning out the trailing edge of the wing too much, which is a common issue
+                TECoords = wingGeometry["wing"]["TECoords"]
+                TECoords[:, chordIndex] -= 1e-2  # Need to be slightly ahead of the TE
+                TECoords[0, spanIndex] += 1e-2  # Need to be in from the symmetry plane
+                TECoords[-1, spanIndex] -= 1e-2  # Need to be in from the tip
+                DVGeoComp.nom_addThicknessConstraints2D("TEThickness", TESparCoords, TECoords, nSpan=20, nChord=20)
+                top.add_constraint(f"{geoCompName}.TEThickness", lower=0.5)

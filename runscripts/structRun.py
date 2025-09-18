@@ -18,6 +18,7 @@ import sys
 # External Python modules
 # ==============================================================================
 import numpy as np
+from stl import mesh
 from mpi4py import MPI
 import openmdao.api as om
 from mphys import Multipoint, MPhysVariables
@@ -46,11 +47,13 @@ from utils import (
     ArrayMergeComp,
 )
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AircraftSpecs"))
-from STWFlightPoints import flightPointSets  # noqa: E402
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
+from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geometry"))
-from wingGeometry import wingGeometry  # noqa: E402
+from geometry.wingGeometry import wingGeometry  # noqa: E402
+
+from performanceCalc import FuelDistributionComp  # noqa: E402
 
 verticalIndex = wingGeometry["verticalIndex"]
 chordIndex = wingGeometry["chordIndex"]
@@ -64,7 +67,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="analysis",
+    default="derivCheck",
     choices=["check", "analysis", "derivCheck", "opt"],
     help="Task to run",
 )
@@ -227,18 +230,9 @@ class Top(Multipoint):
                         fuelMassDVInds.append(dvNum)
                         init_dvs[dvNum] = 500.0
 
-                # We want to split the TACS DV array into the fuel mass DVs and the rest of the structural DVs
+                # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
                 sizingDVInds = list(set(range(len(init_dvs))) - set(fuelMassDVInds))
-                dvSys.add_output("fuelMasses", val=init_dvs[fuelMassDVInds])
                 dvSys.add_output("dv_struct", val=init_dvs[sizingDVInds])
-
-                mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
-                self.add_subsystem(
-                    "struct_dv_merger",
-                    mergeComp,
-                    promotes_inputs=[("in0", "fuelMasses"), ("in1", "dv_struct")],
-                    promotes_outputs=[("out", "dv_struct_full")],
-                )
 
                 if args.addStructDVs:
                     lb, ub = struct_builder.get_dv_bounds()
@@ -248,12 +242,6 @@ class Top(Multipoint):
                         lower=lb[sizingDVInds],
                         upper=ub[sizingDVInds],
                         scaler=structDVScaling[sizingDVInds] * args.structScalingFactor,
-                    )
-                if args.useFuelMassDVs:
-                    self.add_design_var(
-                        "fuelMasses",
-                        lower=np.zeros_like(init_dvs[fuelMassDVInds]),
-                        scaler=1e-3,
                     )
 
                 self.add_subsystem("mesh", struct_builder.get_mesh_coordinate_subsystem())
@@ -269,6 +257,47 @@ class Top(Multipoint):
                 self.connect(
                     f"mesh.{MPhysVariables.Structures.Mesh.COORDINATES}",
                     f"geometry.{MPhysVariables.Structures.Geometry.COORDINATES_INPUT}",
+                )
+
+                # --- Fuel mass computation ---
+                dvSys.add_output("fuelMass", val=6000.0, shape=1)  # Total fuel mass, placeholder for now
+                if args.useFuelMassDVs:
+                    self.add_design_var(
+                        "fuelMass",
+                        lower=0.0,
+                        scaler=1e-3,
+                    )
+
+                # Need a component to mux the scalar bay volumes computed by the geometry component into an array
+                bayVolMuxer = om.MuxComp(vec_size=len(fuelMassDVInds))
+                bayVolMuxer.add_var("RibBay-Volume", units="m**3")
+                self.add_subsystem(
+                    "bayVolMuxer",
+                    bayVolMuxer,
+                )
+                for ii in range(len(fuelMassDVInds)):
+                    self.connect(f"geometry.RibBay-Volume_{ii}", f"bayVolMuxer.RibBay-Volume_{ii}")
+                self.connect("bayVolMuxer.RibBay-Volume", "bayVolumes")
+
+                # This is the component that computes the fuel masses in each bay from the total fuel mass and the bay volumes
+                # fuelMass input will be automatically connected to the dvSys output through promotion
+                self.add_subsystem(
+                    "fuelMassDistribution",
+                    FuelDistributionComp(
+                        fuelDensity=aircraftSpecs["fuelDensity"],
+                        wingboxVolumeFraction=aircraftSpecs["wingboxFuelVolumeFraction"],
+                        auxTankVolume=aircraftSpecs["auxFuelVolume"],
+                    ),
+                    promotes=["*"],
+                )
+
+                # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
+                mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
+                self.add_subsystem(
+                    "struct_dv_merger",
+                    mergeComp,
+                    promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
+                    promotes_outputs=[("out", "dv_struct_full")],
                 )
 
             # this is the method that needs to be called for every point in this mp_group
@@ -291,6 +320,11 @@ class Top(Multipoint):
                 self.connect(f"{fp.name}.compliance", f"totalCompliance.compliance_{ii}")
 
     def configure(self):
+        # Set the constrain surface required for DVConstraints to compute the rib bay volumes
+        stlFile = os.path.join(os.path.dirname(__file__), "DVConstraintsSurface.stl")
+        stlMesh = mesh.Mesh.from_file(stlFile)
+        surfList = [stlMesh.v0, stlMesh.v1 - stlMesh.v0, stlMesh.v2 - stlMesh.v0]
+        self.geometry.nom_setConstraintSurface(surfList)
         # Setup the geometric DVs
         setupDVGeo(
             args,
@@ -300,7 +334,14 @@ class Top(Multipoint):
             dvScaleFactor=args.geoScalingFactor,
             geoCompName="geometry",
             addGeoDVs=args.addGeoDVs,
+            addGeoConstraints=False,
         )
+
+        DVCon = self.geometry.nom_getDVCon()
+        if self.comm.rank == 0:
+            DVCon.writeTecplot(os.path.join(outputDir, "DVConstraints.dat"))
+            DVCon.writeSurfaceTecplot(os.path.join(outputDir, "DVConstraintsSurface.dat"))
+            DVCon.writeSurfaceSTL(os.path.join(outputDir, "DVConstraintsSurface.stl"))
 
         # Add TACS constraints
         firstScenario = self.__getattribute__(flightPoints[0].name)
@@ -325,6 +366,9 @@ else:
     raise ValueError(f"Unknown optType: {args.optType}")
 
 prob.setup(force_alloc_complex=isComplex, mode="rev")
+# This `final_setup` call is needed to force OpenMDAO to figure out the sizes of things, otherwise a call to
+# `get_desig_vars` inside `setValsFromFiles` fails
+prob.final_setup()
 
 # ==============================================================================
 # Potentially set initial DVs from a previous run
@@ -346,7 +390,7 @@ if args.task in ["analysis", "derivCheck"]:
         np.set_printoptions(precision=16, linewidth=200)
         DVGeo = model.geometry.nom_getDVGeo()
         geoDVNames = DVGeo.getVarNames()
-        wrt = geoDVNames + ["fuelMasses"]
+        wrt = geoDVNames + ["fuelMass"]
         of = []
         for fp in flightPoints:
             of += [f"{fp.name}.{func}" for func in ["mass", "compliance"]]
@@ -366,7 +410,7 @@ if args.task in ["analysis", "derivCheck"]:
                     out_stream=textFile,
                     compact_print=True,
                     rel_err_tol=1e-8 if isComplex else 1e-2,
-                    abs_err_tol=1e6,
+                    abs_err_tol=1e-6,
                 )
 
                 # Now do directional derivative for struct dvs
@@ -383,7 +427,7 @@ if args.task in ["analysis", "derivCheck"]:
                         out_stream=textFile,
                         compact_print=True,
                         rel_err_tol=1e-8 if isComplex else 1e-2,
-                        abs_err_tol=1e6,
+                        abs_err_tol=1e-6,
                         directional=True,
                     )
                 )
