@@ -326,121 +326,6 @@ class FuelTankUsageComp(om.ExplicitComponent):
         #     print(f"fuelTankUsage = {outputs['fuelTankUsage'][0]: 11.7e}")
 
 
-class FuelDistributionComp(om.JaxExplicitComponent):
-    """Given the total fuel mass required to be stored in the wingbox, and the volumes of each rib bay, compute the mass
-    of fuel in each bay and the fraction of the total fuel volume used
-    """
-
-    def initialize(self):
-        self.options.declare("fuelDensity", types=float, desc="Density of fuel")
-        self.options.declare(
-            "wingboxVolumeFraction", types=float, desc="Fraction of each rib bay assumed to be fuel tank"
-        )
-        self.options.declare("auxTankVolume", types=float, desc="Volume of auxiliary fuel tanks not in wingbox")
-
-    def setup(self):
-        self.add_input("bayVolumes", shape_by_conn=True, units="m**3")
-        self.add_input("fuelMass", units="kg")
-        self.add_output("bayFuelMasses", copy_shape="bayVolumes", units="kg")
-        self.add_output("fuelTankUsage")
-
-    def get_self_statics(self):
-        return (self.options["fuelDensity"], self.options["wingboxVolumeFraction"], self.options["auxTankVolume"])
-
-    def compute_primal(self, bayVolumes, fuelMass):
-        volFrac = self.options["wingboxVolumeFraction"]
-        auxTankVol = self.options["auxTankVolume"]
-        totalVolume = jnp.sum(bayVolumes) * volFrac * 2.0 + auxTankVol
-        fuelVolume = (fuelMass / self.options["fuelDensity"])[0]
-        fuelTankUsage = fuelVolume / totalVolume
-
-        # The calculations below are a bit confusing, they could be done more simply with a for loop and some if
-        # statements but then the code wouldn't be jittable/differentiable by jax
-
-        # Start by assuming all bays are full
-        bayFullFuelMasses = jnp.array(bayVolumes * volFrac * self.options["fuelDensity"]) * 2
-
-        # Track the cumulative sum of fuel in the bays (flip the array so we are effectively filling from the wing tip inwards)
-        cumulativeFuelMasses = jnp.flip(jnp.cumsum(jnp.flip(bayFullFuelMasses)))
-
-        # Compute how much fuel is left to store if we fill up to each bay
-        remainingFuelMass = fuelMass - cumulativeFuelMasses
-
-        # If we add the remaining fuel mass to the full bay mass, then we will get the amount of fuel that would need to
-        # be stored in each bay to reach the required fuel mass, assuming all outboard tanks are filled first. For most
-        # bays this value will either be greater than the amount of fuel they can store (indicating we need to fill the
-        # bays inboard of this one), or negative (indicating we don't need to fill this bay). The only bay that will
-        # have a positive value less than the full bay mass is the bay where we stop filling. To get the actual mass in
-        # each bay, we therefore need to clip these values between 0 and the full bay mass. However, we want to use a
-        # smooth version of the clip function to avoid discontinuities in the derivatives.
-
-        bayFuelMasses = bayFullFuelMasses + remainingFuelMass
-
-        bayFuelMasses = 0.5 * self.smoothClip(bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=1e-4)
-
-        return bayFuelMasses, fuelTankUsage
-
-    @staticmethod
-    def KSMax2(a, b, rho):
-        """Elementwise KS maximum of two arrays
-
-        Parameters
-        ----------
-        a : array_like
-            First array
-        b : array_like
-            Second array
-        rho : float/complex or array_like
-            Rho value for KS aggregation, higher values give a closer, but less smooth, approximation to the true max
-
-        Returns
-        -------
-        array_like
-            Elementwise KS maximum of a and b
-        """
-        minVal = jnp.minimum(a, b)
-        maxVal = jnp.maximum(a, b)
-        return maxVal + 1 / rho * jnp.log(1 + jnp.exp(rho * (minVal - maxVal)))
-
-    @staticmethod
-    def smoothClip(x, lb, ub, maxRelError=1e-4):
-        """A smooth approximation to the clip function using KS aggregation
-
-        Parameters
-        ----------
-        x : array_like
-            Values to be clipped
-        lb : float/complex or array_like
-            Lower bound, can be a single value or an array of same shape as x
-        ub : float/complex
-            Upper bound, can be a single value or an array of same shape as x
-        maxRelError : float/complex
-            The maximum error in this clipping will occur when x is at the lb or ub value. This parameter is used to
-            pick the rho value used in the KS aggregation such that the error at these points is less than maxRelError,
-            relative to the range (ub - lb).
-
-        Returns
-        -------
-        float/complex
-            Clipped values
-        """
-        # Convert lb and ub to arrays if they are single values
-        if np.isscalar(lb):
-            lb = jnp.full_like(x, lb)
-        if np.isscalar(ub):
-            ub = jnp.full_like(x, ub)
-
-        # The maximum error in the two element KSMax function is 1/rho * log(2), which is roughly 0.7/rho and occurs when
-        # the two inputs are equal. To be conservative, we will therefore choose rho = 1 / maxAllowedError
-        width = ub - lb
-        maxError = maxRelError * width
-        rho = 1 / maxError
-
-        # First do min of x and ub, KSMin = -KSMax(-f)
-        clipped = -FuelDistributionComp.KSMax2(-x, -ub, rho)
-        return FuelDistributionComp.KSMax2(clipped, lb, rho)
-
-
 def computeWingLoading(wingArea, MTOM):
     """Compute the wing loading of an aircraft
 
@@ -665,6 +550,155 @@ class AircraftPerformanceGroup(om.Group):
                     promotes_outputs=["*"],
                 )
                 # self.connect(f"{flightPoint.name}SepArea", f"{flightPoint.name}BuffetCon.SepArea")
+
+
+class FuelDistributionComp(om.JaxExplicitComponent):
+    """Given the total fuel mass required to be stored in the wingbox, and the volumes of each rib bay, compute the mass
+    of fuel in each bay and the fraction of the total fuel volume used
+    """
+
+    def initialize(self):
+        self.options.declare("fuelDensity", types=float, desc="Density of fuel")
+        self.options.declare(
+            "wingboxVolumeFraction", types=float, desc="Fraction of each rib bay assumed to be fuel tank"
+        )
+        self.options.declare("auxTankVolume", types=float, desc="Volume of auxiliary fuel tanks not in wingbox")
+        self.options.declare("numRibBays", types=int)
+
+    def setup(self):
+        self.add_input("bayVolumes", shape=self.options["numRibBays"], units="m**3")
+        self.add_input("fuelMass", units="kg")
+        self.add_output("bayFuelMasses", copy_shape="bayVolumes", units="kg")
+        self.add_output("fuelTankUsage")
+
+    def get_self_statics(self):
+        return (self.options["fuelDensity"], self.options["wingboxVolumeFraction"], self.options["auxTankVolume"])
+
+    def compute_primal(self, bayVolumes, fuelMass):
+        volFrac = self.options["wingboxVolumeFraction"]
+        auxTankVol = self.options["auxTankVolume"]
+        totalVolume = jnp.sum(bayVolumes) * volFrac * 2.0 + auxTankVol
+        fuelVolume = (fuelMass / self.options["fuelDensity"])[0]
+        fuelTankUsage = fuelVolume / totalVolume
+
+        # The calculations below are a bit confusing, they could be done more simply with a for loop and some if
+        # statements but then the code wouldn't be jittable/differentiable by jax
+
+        # Start by assuming all bays are full
+        bayFullFuelMasses = jnp.array(bayVolumes * volFrac * self.options["fuelDensity"]) * 2
+
+        # Track the cumulative sum of fuel in the bays (flip the array so we are effectively filling from the wing tip inwards)
+        cumulativeFuelMasses = jnp.flip(jnp.cumsum(jnp.flip(bayFullFuelMasses)))
+
+        # Compute how much fuel is left to store if we fill up to each bay
+        remainingFuelMass = fuelMass - cumulativeFuelMasses
+
+        # If we add the remaining fuel mass to the full bay mass, then we will get the amount of fuel that would need to
+        # be stored in each bay to reach the required fuel mass, assuming all outboard tanks are filled first. For most
+        # bays this value will either be greater than the amount of fuel they can store (indicating we need to fill the
+        # bays inboard of this one), or negative (indicating we don't need to fill this bay). The only bay that will
+        # have a positive value less than the full bay mass is the bay where we stop filling. To get the actual mass in
+        # each bay, we therefore need to clip these values between 0 and the full bay mass. However, we want to use a
+        # smooth version of the clip function to avoid discontinuities in the derivatives.
+
+        bayFuelMasses = bayFullFuelMasses + remainingFuelMass
+
+        bayFuelMasses = 0.5 * self.smoothClip(bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=1e-4)
+
+        return bayFuelMasses, fuelTankUsage
+
+    @staticmethod
+    def KSMax2(a, b, rho):
+        """Elementwise KS maximum of two arrays
+
+        Parameters
+        ----------
+        a : array_like
+            First array
+        b : array_like
+            Second array
+        rho : float/complex or array_like
+            Rho value for KS aggregation, higher values give a closer, but less smooth, approximation to the true max
+
+        Returns
+        -------
+        array_like
+            Elementwise KS maximum of a and b
+        """
+        minVal = jnp.minimum(a, b)
+        maxVal = jnp.maximum(a, b)
+        return maxVal + 1 / rho * jnp.log(1 + jnp.exp(rho * (minVal - maxVal)))
+
+    @staticmethod
+    def smoothClip(x, lb, ub, maxRelError=1e-4):
+        """A smooth approximation to the clip function using KS aggregation
+
+        Parameters
+        ----------
+        x : array_like
+            Values to be clipped
+        lb : float/complex or array_like
+            Lower bound, can be a single value or an array of same shape as x
+        ub : float/complex
+            Upper bound, can be a single value or an array of same shape as x
+        maxRelError : float/complex
+            The maximum error in this clipping will occur when x is at the lb or ub value. This parameter is used to
+            pick the rho value used in the KS aggregation such that the error at these points is less than maxRelError,
+            relative to the range (ub - lb).
+
+        Returns
+        -------
+        float/complex
+            Clipped values
+        """
+        # Convert lb and ub to arrays if they are single values
+        if np.isscalar(lb):
+            lb = jnp.full_like(x, lb)
+        if np.isscalar(ub):
+            ub = jnp.full_like(x, ub)
+
+        # The maximum error in the two element KSMax function is 1/rho * log(2), which is roughly 0.7/rho and occurs when
+        # the two inputs are equal. To be conservative, we will therefore choose rho = 1 / maxAllowedError
+        width = ub - lb
+        maxError = maxRelError * width
+        rho = 1 / maxError
+
+        # First do min of x and ub, KSMin = -KSMax(-f)
+        clipped = -FuelDistributionComp.KSMax2(-x, -ub, rho)
+        return FuelDistributionComp.KSMax2(clipped, lb, rho)
+
+
+class FuelDistributionGroup(om.Group):
+    def initialize(self):
+        self.options.declare("aircraftSpecs", types=dict)
+        self.options.declare("numRibBays", types=int)
+        self.options.declare("volumeVarName", types=str, desc="Name of the variable containing the rib bay volumes")
+
+    def setup(self):
+        specs = self.options["aircraftSpecs"]
+
+        # Need a component to mux the scalar bay volumes computed by the geometry component into an array
+        bayVolMuxer = om.MuxComp(vec_size=self.options["numRibBays"])
+        bayVolMuxer.add_var(self.options["volumeVarName"], units="m**3")
+        self.add_subsystem(
+            "bayVolMuxer",
+            bayVolMuxer,
+            promotes=["*"],
+        )
+
+        # This is the component that computes the fuel masses in each bay from the total fuel mass and the bay volumes
+        # fuelMass input will be automatically connected to the dvSys output through promotion
+        self.add_subsystem(
+            "fuelMassDistribution",
+            FuelDistributionComp(
+                fuelDensity=specs["fuelDensity"],
+                wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
+                auxTankVolume=specs["auxFuelVolume"],
+                numRibBays=self.options["numRibBays"],
+            ),
+            promotes_outputs=["*"],
+            promotes_inputs=["fuelMass", ("bayVolumes", self.options["volumeVarName"])],
+        )
 
 
 # Test the performance group derivatives

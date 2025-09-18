@@ -53,7 +53,7 @@ from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 
 from geometry.wingGeometry import wingGeometry  # noqa: E402
 
-from performanceCalc import FuelDistributionComp  # noqa: E402
+from performanceCalc import FuelDistributionGroup  # noqa: E402
 
 verticalIndex = wingGeometry["verticalIndex"]
 chordIndex = wingGeometry["chordIndex"]
@@ -67,7 +67,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="derivCheck",
+    default="check",
     choices=["check", "analysis", "derivCheck", "opt"],
     help="Task to run",
 )
@@ -229,6 +229,7 @@ class Top(Multipoint):
                         dvNum = globalDVs[dvName]["num"]
                         fuelMassDVInds.append(dvNum)
                         init_dvs[dvNum] = 500.0
+                self.numRibBays = len(fuelMassDVInds)
 
                 # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
                 sizingDVInds = list(set(range(len(init_dvs))) - set(fuelMassDVInds))
@@ -268,25 +269,10 @@ class Top(Multipoint):
                         scaler=1e-3,
                     )
 
-                # Need a component to mux the scalar bay volumes computed by the geometry component into an array
-                bayVolMuxer = om.MuxComp(vec_size=len(fuelMassDVInds))
-                bayVolMuxer.add_var("RibBay-Volume", units="m**3")
-                self.add_subsystem(
-                    "bayVolMuxer",
-                    bayVolMuxer,
-                )
-                for ii in range(len(fuelMassDVInds)):
-                    self.connect(f"geometry.RibBay-Volume_{ii}", f"bayVolMuxer.RibBay-Volume_{ii}")
-                self.connect("bayVolMuxer.RibBay-Volume", "bayVolumes")
-
-                # This is the component that computes the fuel masses in each bay from the total fuel mass and the bay volumes
-                # fuelMass input will be automatically connected to the dvSys output through promotion
                 self.add_subsystem(
                     "fuelMassDistribution",
-                    FuelDistributionComp(
-                        fuelDensity=aircraftSpecs["fuelDensity"],
-                        wingboxVolumeFraction=aircraftSpecs["wingboxFuelVolumeFraction"],
-                        auxTankVolume=aircraftSpecs["auxFuelVolume"],
+                    FuelDistributionGroup(
+                        aircraftSpecs=aircraftSpecs, numRibBays=len(fuelMassDVInds), volumeVarName="RibBay-Volume"
                     ),
                     promotes=["*"],
                 )
@@ -336,6 +322,10 @@ class Top(Multipoint):
             addGeoDVs=args.addGeoDVs,
             addGeoConstraints=False,
         )
+
+        # Connect rib bay volumes to the fuel distribution group
+        for ii in range(self.numRibBays):
+            self.connect(f"geometry.RibBay-Volume_{ii}", f"RibBay-Volume_{ii}")
 
         DVCon = self.geometry.nom_getDVCon()
         if self.comm.rank == 0:
