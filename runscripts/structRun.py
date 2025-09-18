@@ -272,7 +272,10 @@ class Top(Multipoint):
                 self.add_subsystem(
                     "fuelMassDistribution",
                     FuelDistributionGroup(
-                        aircraftSpecs=aircraftSpecs, numRibBays=len(fuelMassDVInds), volumeVarName="RibBay-Volume"
+                        aircraftSpecs=aircraftSpecs,
+                        numRibBays=len(fuelMassDVInds),
+                        volumeVarName="RibBay-Volume",
+                        maxSmoothingRelError=1e-3,
                     ),
                     promotes=["*"],
                 )

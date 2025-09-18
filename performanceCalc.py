@@ -564,6 +564,7 @@ class FuelDistributionComp(om.JaxExplicitComponent):
         )
         self.options.declare("auxTankVolume", types=float, desc="Volume of auxiliary fuel tanks not in wingbox")
         self.options.declare("numRibBays", types=int)
+        self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
 
     def setup(self):
         self.add_input("bayVolumes", shape=self.options["numRibBays"], units="m**3")
@@ -572,7 +573,12 @@ class FuelDistributionComp(om.JaxExplicitComponent):
         self.add_output("fuelTankUsage")
 
     def get_self_statics(self):
-        return (self.options["fuelDensity"], self.options["wingboxVolumeFraction"], self.options["auxTankVolume"])
+        return (
+            self.options["fuelDensity"],
+            self.options["wingboxVolumeFraction"],
+            self.options["auxTankVolume"],
+            self.options["maxSmoothingRelError"],
+        )
 
     def compute_primal(self, bayVolumes, fuelMass):
         volFrac = self.options["wingboxVolumeFraction"]
@@ -603,7 +609,9 @@ class FuelDistributionComp(om.JaxExplicitComponent):
 
         bayFuelMasses = bayFullFuelMasses + remainingFuelMass
 
-        bayFuelMasses = 0.5 * self.smoothClip(bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=1e-4)
+        bayFuelMasses = 0.5 * self.smoothClip(
+            bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=self.options["maxSmoothingRelError"]
+        )
 
         return bayFuelMasses, fuelTankUsage
 
@@ -673,6 +681,7 @@ class FuelDistributionGroup(om.Group):
         self.options.declare("aircraftSpecs", types=dict)
         self.options.declare("numRibBays", types=int)
         self.options.declare("volumeVarName", types=str, desc="Name of the variable containing the rib bay volumes")
+        self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
 
     def setup(self):
         specs = self.options["aircraftSpecs"]
@@ -695,6 +704,7 @@ class FuelDistributionGroup(om.Group):
                 wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
                 auxTankVolume=specs["auxFuelVolume"],
                 numRibBays=self.options["numRibBays"],
+                maxSmoothingRelError=self.options["maxSmoothingRelError"],
             ),
             promotes_outputs=["*"],
             promotes_inputs=["fuelMass", ("bayVolumes", self.options["volumeVarName"])],
