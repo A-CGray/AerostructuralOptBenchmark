@@ -366,17 +366,79 @@ class FuelDistributionComp(om.JaxExplicitComponent):
         # Compute how much fuel is left to store if we fill up to each bay
         remainingFuelMass = fuelMass - cumulativeFuelMasses
 
-        # Now, if the remaining fuel mass is less than zero, then we don't need to fill this bay completely, so we can
-        # add the negative remaining mass to the full bay mass to get the actual mass we need in that bay, if any bays
-        # are then left with a negative mass, we don't need to fill them at all, so we set them to zero. Then remember
-        # to divide by 2 to get the mass in a single wing
-        bayFuelMasses = 0.5 * jnp.where(
-            remainingFuelMass < 0.0,
-            jnp.clip(bayFullFuelMasses + remainingFuelMass, min=0.0),
-            bayFullFuelMasses,
-        )
+        # If we add the remaining fuel mass to the full bay mass, then we will get the amount of fuel that would need to
+        # be stored in each bay to reach the required fuel mass, assuming all outboard tanks are filled first. For most
+        # bays this value will either be greater than the amount of fuel they can store (indicating we need to fill the
+        # bays inboard of this one), or negative (indicating we don't need to fill this bay). The only bay that will
+        # have a positive value less than the full bay mass is the bay where we stop filling. To get the actual mass in
+        # each bay, we therefore need to clip these values between 0 and the full bay mass. However, we want to use a
+        # smooth version of the clip function to avoid discontinuities in the derivatives.
+
+        bayFuelMasses = bayFullFuelMasses + remainingFuelMass
+
+        bayFuelMasses = 0.5 * self.smoothClip(bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=1e-4)
 
         return bayFuelMasses, fuelTankUsage
+
+    @staticmethod
+    def KSMax2(a, b, rho):
+        """Elementwise KS maximum of two arrays
+
+        Parameters
+        ----------
+        a : array_like
+            First array
+        b : array_like
+            Second array
+        rho : float/complex or array_like
+            Rho value for KS aggregation, higher values give a closer, but less smooth, approximation to the true max
+
+        Returns
+        -------
+        array_like
+            Elementwise KS maximum of a and b
+        """
+        minVal = jnp.minimum(a, b)
+        maxVal = jnp.maximum(a, b)
+        return maxVal + 1 / rho * jnp.log(1 + jnp.exp(rho * (minVal - maxVal)))
+
+    @staticmethod
+    def smoothClip(x, lb, ub, maxRelError=1e-4):
+        """A smooth approximation to the clip function using KS aggregation
+
+        Parameters
+        ----------
+        x : array_like
+            Values to be clipped
+        lb : float/complex or array_like
+            Lower bound, can be a single value or an array of same shape as x
+        ub : float/complex
+            Upper bound, can be a single value or an array of same shape as x
+        maxRelError : float/complex
+            The maximum error in this clipping will occur when x is at the lb or ub value. This parameter is used to
+            pick the rho value used in the KS aggregation such that the error at these points is less than maxRelError,
+            relative to the range (ub - lb).
+
+        Returns
+        -------
+        float/complex
+            Clipped values
+        """
+        # Convert lb and ub to arrays if they are single values
+        if np.isscalar(lb):
+            lb = jnp.full_like(x, lb)
+        if np.isscalar(ub):
+            ub = jnp.full_like(x, ub)
+
+        # The maximum error in the two element KSMax function is 1/rho * log(2), which is roughly 0.7/rho and occurs when
+        # the two inputs are equal. To be conservative, we will therefore choose rho = 1 / maxAllowedError
+        width = ub - lb
+        maxError = maxRelError * width
+        rho = 1 / maxError
+
+        # First do min of x and ub, KSMin = -KSMax(-f)
+        clipped = -FuelDistributionComp.KSMax2(-x, -ub, rho)
+        return FuelDistributionComp.KSMax2(clipped, lb, rho)
 
 
 def computeWingLoading(wingArea, MTOM):

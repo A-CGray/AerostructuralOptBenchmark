@@ -365,6 +365,9 @@ elif args.optType.lower() == "minmass":
 else:
     raise ValueError(f"Unknown optType: {args.optType}")
 
+if args.useFuelMassDVs:
+    model.add_constraint("fuelTankUsage", upper=1.0, scaler=1.0)
+
 prob.setup(force_alloc_complex=isComplex, mode="rev")
 # This `final_setup` call is needed to force OpenMDAO to figure out the sizes of things, otherwise a call to
 # `get_desig_vars` inside `setValsFromFiles` fails
