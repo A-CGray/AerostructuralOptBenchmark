@@ -22,3 +22,24 @@ class FlightPoint(AeroProblem):
         self.loadFactor = loadFactor
         self.fuelFraction = fuelFraction
         self.failureGroups = failureGroups
+
+
+class LoadCase:
+    def __init__(self, name: str, loadFactor: float, fuelFraction: float, failureGroups: List[str]):
+        """Define a load case, like a flight point but without the aerodynamic state information
+
+        Parameters
+        ----------
+        name : string
+            Name of the load case, should be unique and currently must contain either "cruise" or "maneuver
+        loadFactor : float
+            Load case load factor (how many G's the aircraft is pulling)
+        fuelFraction : float
+            What fraction of the total fuel mass is the aircraft carrying at this load case
+        failureGroups : list of strings
+            Names of wingbox component groups for which to compute a failure constraint value at this load case
+        """
+        self.name = name
+        self.loadFactor = loadFactor
+        self.fuelFraction = fuelFraction
+        self.failureGroups = failureGroups

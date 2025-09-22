@@ -24,7 +24,7 @@ parser.add_argument(
     "--initDVs",
     type=str,
     nargs="*",
-    default=["DVs/StructOpt-L1-Linear.pkl"],
+    default=[],
     help="Files from which to set DVs used during initialisation, some MPhys components perform some initialisation the first time their compute method is called, these DVs will be set when that happens. If you have DVs you would like to use for your optimisation/analysis from but not use for initialisation, pass those to the `--postInitDVs` options. You can pass multiple paths in which case later files will overwrite DVs from earlier files",
 )
 parser.add_argument(
@@ -79,8 +79,7 @@ parser.add_argument(
 parser.add_argument(
     "--useFuelMassDVs",
     action="store_true",
-    help="Enable design variables controlling the point masses representing fuel in each rib bay",
-    default=True,
+    help="Enable the design variables controlling the fuel mass in each flight condition",
 )
 parser.add_argument("--useComposite", action="store_true", help="Use composite material", default=True)
 parser.add_argument(

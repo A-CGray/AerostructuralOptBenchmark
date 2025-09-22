@@ -19,7 +19,7 @@ Definition of MACH Tutorial wing flight points
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from FlightPoint import FlightPoint
+from .FlightPoint import FlightPoint, LoadCase
 
 # ==============================================================================
 # Cruise conditions
@@ -140,6 +140,22 @@ highAltHighSpeedPushDown = FlightPoint(
 )
 
 # ==============================================================================
+# Taxi Bump Conditions
+# ==============================================================================
+taxiBumpPositive = LoadCase(
+    "taxi_bump_positive",
+    loadFactor=2.0,
+    fuelFraction=1.0,
+    failureGroups=["l_skin", "u_skin", "spar", "rib"],
+)
+taxiBumpNegative = LoadCase(
+    "taxi_bump_negative",
+    loadFactor=-2.0,
+    fuelFraction=1.0,
+    failureGroups=["l_skin", "u_skin", "spar", "rib"],
+)
+
+# ==============================================================================
 # Define sets of flight points
 # ==============================================================================
 flightPointSets = {
@@ -159,10 +175,7 @@ flightPointSets = {
         highAltHighSpeedPullUp,
         highAltHighSpeedPushDown,
     ],
-    "maneuverOnly": [
-        seaLevelLowSpeedPullUp,
-        seaLevelLowSpeedPushDown,
-    ],
+    "maneuverOnly": [seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown, taxiBumpPositive, taxiBumpNegative],
     "buffet": [buffetHighLift, buffetHighSpeed],
     "cruise+buffet": [standardCruise, buffetHighLift, buffetHighSpeed],
     "5pt-buffet": [

@@ -20,12 +20,11 @@ import numpy as np
 # Extension modules
 # ==============================================================================
 THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(THIS_FILE_DIR, "../AircraftSpecs"))
-from STWFlightPoints import flightPointSets  # noqa: E402
-from STWSpecs import aircraftSpecs  # noqa: E402
-
-sys.path.append(os.path.join(THIS_FILE_DIR, "../geometry"))
-from wingGeometry import wingGeometry  # noqa: E402
+sys.path.append(os.path.join(THIS_FILE_DIR, ".."))
+from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
+from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
+from geometry.wingGeometry import wingGeometry  # noqa: E402
+from performanceCalc import FuelDistributionGroup  # noqa: E402
 
 
 def getGeometryData():
@@ -407,3 +406,103 @@ class ArrayMergeComp(om.ExplicitComponent):
         outputs["out"] = 0.0
         for i in range(self.numArrays):
             outputs["out"][self.inds[i]] += inputs[f"in{i}"]
+
+
+def getStructDVs(structBuilder):
+    initStructDVs = structBuilder.get_initial_dvs()
+
+    # Get the indices of the point mass DVs corresponding to fuel mass in each rib bay
+    globalDVs = structBuilder.get_fea_assembler().getGlobalDVs()
+    fuelMassDVInds = []
+    for dvName in globalDVs:
+        if "FuelMass" in dvName:
+            dvNum = globalDVs[dvName]["num"]
+            fuelMassDVInds.append(dvNum)
+
+    # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
+    sizingDVInds = list(set(range(len(initStructDVs))) - set(fuelMassDVInds))
+    return initStructDVs, fuelMassDVInds, sizingDVInds
+
+
+def setupFuelMassGroup(model, fuelDVName, numRibBays):
+    return model.add_subsystem(
+        "fuelMassDistribution",
+        FuelDistributionGroup(
+            aircraftSpecs=aircraftSpecs,
+            numRibBays=numRibBays,
+            volumeVarName="RibBay-Volume",
+            maxSmoothingRelError=1e-3,
+        ),
+        promotes_inputs=["*", ("fuelMass", fuelDVName)],
+        promotes_outputs=["*"],
+    )
+
+
+def mergeStructDVs(model, fuelMassDVInds, sizingDVInds):
+    mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
+    return model.add_subsystem(
+        "struct_dv_merger",
+        mergeComp,
+        promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
+        promotes_outputs=[("out", "dv_struct_full")],
+    )
+
+
+def setupStructDVs(
+    model, struct_builder, dvSys, scenarioName, fuelDVName, useFuelMassDVs, useStructDVs, structScalingFactor
+):
+    init_dvs = struct_builder.get_initial_dvs()
+
+    # Get the indices of the point mass DVs corresponding to fuel mass in each rib bay
+    globalDVs = struct_builder.get_fea_assembler().getGlobalDVs()
+    fuelMassDVInds = []
+    for dvName in globalDVs:
+        if "FuelMass" in dvName:
+            dvNum = globalDVs[dvName]["num"]
+            fuelMassDVInds.append(dvNum)
+
+    # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
+    sizingDVInds = list(set(range(len(init_dvs))) - set(fuelMassDVInds))
+    dvSys.add_output("dv_struct", val=init_dvs[sizingDVInds])
+
+    if useStructDVs:
+        lb, ub = struct_builder.get_dv_bounds()
+        structDVScaling = np.array(struct_builder.fea_assembler.scaleList)
+        model.add_design_var(
+            "dv_struct",
+            lower=lb[sizingDVInds],
+            upper=ub[sizingDVInds],
+            scaler=structDVScaling[sizingDVInds] * structScalingFactor,
+        )
+
+    # --- Fuel mass computation ---
+    dvSys.add_output(fuelDVName, val=10500.0, shape=1)  # Total fuel mass, placeholder for now
+    if useFuelMassDVs:
+        model.add_design_var(
+            fuelDVName,
+            lower=0.0,
+            scaler=1e-3,
+        )
+
+    model.add_subsystem(
+        "fuelMassDistribution",
+        FuelDistributionGroup(
+            aircraftSpecs=aircraftSpecs,
+            numRibBays=len(fuelMassDVInds),
+            volumeVarName="RibBay-Volume",
+            maxSmoothingRelError=1e-3,
+        ),
+        promotes_inputs=["*", ("fuelMass", fuelDVName)],
+        promotes_outputs=["*"],
+    )
+
+    # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
+    mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
+    model.add_subsystem(
+        "struct_dv_merger",
+        mergeComp,
+        promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
+        promotes_outputs=[("out", "dv_struct_full")],
+    )
+
+    model.connect("dv_struct_full", f"{scenarioName}.dv_struct")

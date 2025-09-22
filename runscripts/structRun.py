@@ -44,16 +44,16 @@ from utils import (
     saveRunCommand,
     getStructMeshPath,
     getFFDPath,
-    ArrayMergeComp,
+    getStructDVs,
+    setupFuelMassGroup,
+    mergeStructDVs,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
-from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 
 from geometry.wingGeometry import wingGeometry  # noqa: E402
 
-from performanceCalc import FuelDistributionGroup  # noqa: E402
 
 verticalIndex = wingGeometry["verticalIndex"]
 chordIndex = wingGeometry["chordIndex"]
@@ -67,7 +67,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="check",
+    default="analysis",
     choices=["check", "analysis", "derivCheck", "opt"],
     help="Task to run",
 )
@@ -168,10 +168,11 @@ class Top(Multipoint):
                 continuationOptions=continuationOptions,
             )
 
-            # Apply a uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical
-            # load equivalent to 2.5g
-            lSkinCompIDs = fea_assembler.selectCompIDs("L_SKIN")
-            problem.addPressureToComponents(lSkinCompIDs, -flightPoint.loadFactor * 30e3 / 2.5)
+            if "taxi_bump" not in scenario_name.lower():
+                # Apply a uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical
+                # load equivalent to 2.5g
+                lSkinCompIDs = fea_assembler.selectCompIDs("L_SKIN")
+                problem.addPressureToComponents(lSkinCompIDs, -flightPoint.loadFactor * 30e3 / 2.5)
 
         def element_callback(dvNum, compID, compDescript, elemDescripts, specialDVs, **kwargs):
             return setupTACS.element_callback(
@@ -198,7 +199,7 @@ class Top(Multipoint):
         for ii, flightPoint in enumerate(flightPoints):
             scenarioName = flightPoint.name
 
-            struct_builder = TacsBuilder(
+            structBuilder = TacsBuilder(
                 mesh_file=structMeshFile,
                 assembler_setup=setup_assembler,
                 element_callback=element_callback,
@@ -206,8 +207,8 @@ class Top(Multipoint):
                 problem_setup=setup_tacs_problem,
                 write_solution=not args.noFiles,
             )
-            struct_builder.initialize(self.comm)
-            self.FEAAssembler = struct_builder.get_fea_assembler()
+            structBuilder.initialize(self.comm)
+            self.FEAAssembler = structBuilder.get_fea_assembler()
             structDVMap = setupTACS.buildStructDVDictMap(self.FEAAssembler, args)
             if rank == 0:
                 with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
@@ -219,25 +220,15 @@ class Top(Multipoint):
             if ii == 0:
                 # ivc to keep the top level DVs
                 dvSys = self.add_subsystem("dvs", om.IndepVarComp(), promotes=["*"])
-                # add the structural DVs
-                init_dvs = struct_builder.get_initial_dvs()
-                # Set the fuel mass DVs, for now just use a placeholder value of 500kg per bay
-                globalDVs = struct_builder.get_fea_assembler().getGlobalDVs()
-                fuelMassDVInds = []
-                for dvName in globalDVs:
-                    if "FuelMass" in dvName:
-                        dvNum = globalDVs[dvName]["num"]
-                        fuelMassDVInds.append(dvNum)
-                        init_dvs[dvNum] = 500.0
+
+                initStructDVs, fuelMassDVInds, sizingDVInds = getStructDVs(structBuilder)
                 self.numRibBays = len(fuelMassDVInds)
 
-                # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
-                sizingDVInds = list(set(range(len(init_dvs))) - set(fuelMassDVInds))
-                dvSys.add_output("dv_struct", val=init_dvs[sizingDVInds])
+                dvSys.add_output("dv_struct", val=initStructDVs[sizingDVInds])
 
                 if args.addStructDVs:
-                    lb, ub = struct_builder.get_dv_bounds()
-                    structDVScaling = np.array(struct_builder.fea_assembler.scaleList)
+                    lb, ub = structBuilder.get_dv_bounds()
+                    structDVScaling = np.array(structBuilder.fea_assembler.scaleList)
                     self.add_design_var(
                         "dv_struct",
                         lower=lb[sizingDVInds],
@@ -245,7 +236,7 @@ class Top(Multipoint):
                         scaler=structDVScaling[sizingDVInds] * args.structScalingFactor,
                     )
 
-                self.add_subsystem("mesh", struct_builder.get_mesh_coordinate_subsystem())
+                self.add_subsystem("mesh", structBuilder.get_mesh_coordinate_subsystem())
 
                 # Create the geometry component, we dont need a builder because we do it here.
                 geometrySys = self.add_subsystem(
@@ -261,36 +252,22 @@ class Top(Multipoint):
                 )
 
                 # --- Fuel mass computation ---
-                dvSys.add_output("fuelMass", val=6000.0, shape=1)  # Total fuel mass, placeholder for now
+                fuelDVName = "fuelMass"
+                dvSys.add_output(fuelDVName, val=10500.0, shape=1)  # Total fuel mass, placeholder for now
                 if args.useFuelMassDVs:
                     self.add_design_var(
-                        "fuelMass",
+                        fuelDVName,
                         lower=0.0,
                         scaler=1e-3,
                     )
 
-                self.add_subsystem(
-                    "fuelMassDistribution",
-                    FuelDistributionGroup(
-                        aircraftSpecs=aircraftSpecs,
-                        numRibBays=len(fuelMassDVInds),
-                        volumeVarName="RibBay-Volume",
-                        maxSmoothingRelError=1e-3,
-                    ),
-                    promotes=["*"],
-                )
+                setupFuelMassGroup(self, fuelDVName, numRibBays=self.numRibBays)
 
                 # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
-                mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
-                self.add_subsystem(
-                    "struct_dv_merger",
-                    mergeComp,
-                    promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
-                    promotes_outputs=[("out", "dv_struct_full")],
-                )
+                mergeStructDVs(self, fuelMassDVInds, sizingDVInds)
 
             # this is the method that needs to be called for every point in this mp_group
-            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=struct_builder))
+            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=structBuilder))
 
             # Connect the paramterized mesh coordinates to the scenario
             self.connect(
