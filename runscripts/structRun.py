@@ -18,7 +18,6 @@ import sys
 # External Python modules
 # ==============================================================================
 import numpy as np
-from stl import mesh
 from mpi4py import MPI
 import openmdao.api as om
 from mphys import Multipoint, MPhysVariables
@@ -47,6 +46,7 @@ from utils import (
     getStructDVs,
     setupFuelMassGroup,
     mergeStructDVs,
+    getTriangulatedSurface,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -287,10 +287,7 @@ class Top(Multipoint):
 
     def configure(self):
         # Set the constrain surface required for DVConstraints to compute the rib bay volumes
-        stlFile = os.path.join(os.path.dirname(__file__), "DVConstraintsSurface.stl")
-        stlMesh = mesh.Mesh.from_file(stlFile)
-        surfList = [stlMesh.v0, stlMesh.v1 - stlMesh.v0, stlMesh.v2 - stlMesh.v0]
-        self.geometry.nom_setConstraintSurface(surfList)
+        self.geometry.nom_setConstraintSurface(getTriangulatedSurface())
         # Setup the geometric DVs
         setupDVGeo(
             args,
@@ -301,6 +298,8 @@ class Top(Multipoint):
             geoCompName="geometry",
             addGeoDVs=args.addGeoDVs,
             addGeoConstraints=False,
+            computeRibBayVolumes=True,
+            computeToC=False,
         )
 
         # Connect rib bay volumes to the fuel distribution group
