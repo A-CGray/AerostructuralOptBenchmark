@@ -15,6 +15,7 @@ import reverse_argparse
 from pyoptsparse import History
 from scipy.sparse import coo_matrix
 import numpy as np
+from stl import mesh
 
 # ==============================================================================
 # Extension modules
@@ -49,6 +50,12 @@ def getStructMeshPath(level: int, order: int) -> str:
 
 def getFFDPath(level: str):
     return os.path.join(THIS_FILE_DIR, f"../geometry/wing-ffd-advanced-{level}.xyz")
+
+
+def getTriangulatedSurface():
+    stlFile = os.path.join(os.path.dirname(__file__), "DVConstraintsSurface.stl")
+    stlMesh = mesh.Mesh.from_file(stlFile)
+    return [stlMesh.v0, stlMesh.v1 - stlMesh.v0, stlMesh.v2 - stlMesh.v0]
 
 
 def saveRunCommand(parser, args, outputDir):
@@ -189,16 +196,22 @@ def getOutputDir():
 
 
 # ==============================================================================
-# Function for translating OpenMDAO optimisation problem to a pyOptSparse problem
+# Functions for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
-def get_prom_name(model, abs_name):
-    abs2prom = model._resolver._abs2prom
-    if abs_name in abs2prom["input"]:
-        return abs2prom["input"][abs_name][0]
-    elif abs_name in abs2prom["output"]:
-        return abs2prom["output"][abs_name][0]
+def get_prom_name(system, abs_name):
+    name = abs_name
+
+    if hasattr(system, "_resolver"):
+        abs2prom = system._resolver._abs2prom
     else:
-        return abs_name
+        abs2prom = system._var_abs2prom
+
+    if abs_name in abs2prom["input"]:
+        name = abs2prom["input"][abs_name]
+    elif abs_name in abs2prom["output"]:
+        name = abs2prom["output"][abs_name]
+
+    return name if isinstance(name, str) else name[0]
 
 
 def convertSensDict(openmdaoSensDict):
@@ -408,6 +421,31 @@ class ArrayMergeComp(om.ExplicitComponent):
             outputs["out"][self.inds[i]] += inputs[f"in{i}"]
 
 
+class AverageComp(om.ExplicitComponent):
+    """
+    Component to compute the average of an input array
+
+    Parameters
+    ----------
+    size : int
+        Size of the input array
+    """
+
+    def setup(self):
+        self.add_input("in", shape_by_conn=True)
+        self.add_output("out", shape=1)
+
+        self.declare_partials("out", "in")
+
+    def compute(self, inputs, outputs):
+        outputs["out"] = np.mean(inputs["in"])
+
+    def compute_partials(self, inputs, J):
+        if self.size is None:
+            self.size = len(inputs["in"])
+        J["out", "in"][:] = 1.0 / self.size
+
+
 def getStructDVs(structBuilder):
     initStructDVs = structBuilder.get_initial_dvs()
 
@@ -446,63 +484,3 @@ def mergeStructDVs(model, fuelMassDVInds, sizingDVInds):
         promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
         promotes_outputs=[("out", "dv_struct_full")],
     )
-
-
-def setupStructDVs(
-    model, struct_builder, dvSys, scenarioName, fuelDVName, useFuelMassDVs, useStructDVs, structScalingFactor
-):
-    init_dvs = struct_builder.get_initial_dvs()
-
-    # Get the indices of the point mass DVs corresponding to fuel mass in each rib bay
-    globalDVs = struct_builder.get_fea_assembler().getGlobalDVs()
-    fuelMassDVInds = []
-    for dvName in globalDVs:
-        if "FuelMass" in dvName:
-            dvNum = globalDVs[dvName]["num"]
-            fuelMassDVInds.append(dvNum)
-
-    # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
-    sizingDVInds = list(set(range(len(init_dvs))) - set(fuelMassDVInds))
-    dvSys.add_output("dv_struct", val=init_dvs[sizingDVInds])
-
-    if useStructDVs:
-        lb, ub = struct_builder.get_dv_bounds()
-        structDVScaling = np.array(struct_builder.fea_assembler.scaleList)
-        model.add_design_var(
-            "dv_struct",
-            lower=lb[sizingDVInds],
-            upper=ub[sizingDVInds],
-            scaler=structDVScaling[sizingDVInds] * structScalingFactor,
-        )
-
-    # --- Fuel mass computation ---
-    dvSys.add_output(fuelDVName, val=10500.0, shape=1)  # Total fuel mass, placeholder for now
-    if useFuelMassDVs:
-        model.add_design_var(
-            fuelDVName,
-            lower=0.0,
-            scaler=1e-3,
-        )
-
-    model.add_subsystem(
-        "fuelMassDistribution",
-        FuelDistributionGroup(
-            aircraftSpecs=aircraftSpecs,
-            numRibBays=len(fuelMassDVInds),
-            volumeVarName="RibBay-Volume",
-            maxSmoothingRelError=1e-3,
-        ),
-        promotes_inputs=["*", ("fuelMass", fuelDVName)],
-        promotes_outputs=["*"],
-    )
-
-    # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
-    mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
-    model.add_subsystem(
-        "struct_dv_merger",
-        mergeComp,
-        promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
-        promotes_outputs=[("out", "dv_struct_full")],
-    )
-
-    model.connect("dv_struct_full", f"{scenarioName}.dv_struct")
