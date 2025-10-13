@@ -369,11 +369,9 @@ class WingLoadingComp(om.ExplicitComponent):
 class AirframeMassGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
-        self.options.declare("flightPoints", types=list)
 
     def setup(self):
         self.specs = self.options["aircraftSpecs"]
-        self.flightPoints = self.options["flightPoints"]
 
         # --- Compute wing mass from wingbox mass ---
         wingMassComp = WingMassRegressionComp()
@@ -394,17 +392,17 @@ class AirframeMassGroup(om.Group):
 class FuelBurnGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
-        self.options.declare("flightPoints", types=list)
+        self.options.declare("flightPoint")
 
     def setup(self):
         self.specs = self.options["aircraftSpecs"]
-        self.flightPoints = self.options["flightPoints"]
+        self.flightPoint = self.options["flightPoint"]
 
         # --- Drag correction ---
         addedDragComp = CorrectedDragComp(
             extraDragCoeff=self.specs["extraDragCoeff"],
             wingArea=self.specs["refArea"],
-            dynPressure=self.flightPoints[0].q,
+            dynPressure=self.flightPoint.q,
         )
         self.add_subsystem(
             "dragCorrection", addedDragComp, promotes_inputs=[("drag", "cruiseDrag")], promotes_outputs=["*"]
@@ -416,7 +414,7 @@ class FuelBurnGroup(om.Group):
             R=self.specs["range"],
             tsfc=self.specs["tsfc"],
             climbAngle=0.0,
-            v=self.flightPoints[0].V,
+            v=self.flightPoint.V,
         )
         self.add_subsystem(
             "CruiseFuelBurn",
@@ -463,7 +461,6 @@ class AircraftPerformanceGroup(om.Group):
 
         massComp = AirframeMassGroup(
             aircraftSpecs=self.specs,
-            flightPoints=self.flightPoints,
         )
         self.add_subsystem("airframeMass", massComp, promotes=["landingGrossMass", "wingboxMass"])
 
@@ -471,9 +468,10 @@ class AircraftPerformanceGroup(om.Group):
         hasCruisePoint = any("cruise" in flightPoint.name.lower() for flightPoint in self.flightPoints)
 
         if hasCruisePoint:
+            cruisePoint = [fp for fp in self.flightPoints if "cruise" in fp.name.lower()][0]
             fuelBurnComp = FuelBurnGroup(
                 aircraftSpecs=self.specs,
-                flightPoints=self.flightPoints,
+                flightPoint=cruisePoint,
             )
             self.add_subsystem(
                 "fuelBurn",
