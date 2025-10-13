@@ -185,4 +185,13 @@ flightPointSets = {
         buffetHighLift,
         buffetHighSpeed,
     ],
+    "7pt": [
+        standardCruise,
+        seaLevelLowSpeedPullUp,
+        seaLevelLowSpeedPushDown,
+        buffetHighLift,
+        buffetHighSpeed,
+        taxiBumpPositive,
+        taxiBumpNegative,
+    ],
 }
