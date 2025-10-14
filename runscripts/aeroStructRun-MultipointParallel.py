@@ -376,7 +376,7 @@ if args.nonlinear:
         "RelTol": 1e-7,
         "UsePredictor": True,
         "NumPredictorStates": 4,
-        "maxIter": 10,
+        "maxIter": 20,
     }
 
 
@@ -867,9 +867,10 @@ for _, fpFuncName in dvMap.items():
     if fpFuncName in flightPointProbOutputs and fpFuncName not in gradFuncs:
         gradFuncs.append(fpFuncName)
 
-# If we're doing a trim solve and not an optimization then we can remove the ksFailure constraints from the gradFuncs to avoid computing their adjoints
+# If we're doing a trim solve and not an optimization then we can remove the ksFailure and buffet constraints from the gradFuncs to avoid computing their adjoints
 if args.task == "trim":
     gradFuncs[:] = [x for x in gradFuncs if not "ksfailure" in x.lower()]
+    gradFuncs[:] = [x for x in gradFuncs if not "sepsensor" in x.lower()]
 
 # broadcast gradFuncs to all procs in this set
 gradFuncs = ptComm.bcast(gradFuncs, root=0)

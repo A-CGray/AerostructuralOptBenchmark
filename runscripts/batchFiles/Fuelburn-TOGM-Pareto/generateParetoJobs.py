@@ -38,8 +38,8 @@ for weight in paretoWeights:
             nas.mpiexec = f"mpiexec_mpt -n {totalProcs}"
             nas.requested_number_of_nodes = numNodes
 
-            prevJobName = f"VariablePlanformOpt-L{level}-{linType}-ParetoWeight-{weight:.2f}-Part2"
-            jobName = prevJobName.replace("Part2", "Part3")
+            prevJobName = f"VariablePlanformOpt-L{level}-{linType}-ParetoWeight-{weight:.2f}-Part3"
+            jobName = prevJobName.replace("Part3", "Part4")
             outputDir = f"Fuelburn-TOGM-Pareto/{jobName}"
             fullOutputDir = os.path.join(baseOutputDir, outputDir)
             initDVs = os.path.join(baseOutputDir, "Fuelburn-TOGM-Pareto", prevJobName, "AeroStructOpt.hst")
