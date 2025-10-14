@@ -53,7 +53,7 @@ def getFFDPath(level: str):
 
 
 def getTriangulatedSurface():
-    stlFile = os.path.join(os.path.dirname(__file__), "DVConstraintsSurface.stl")
+    stlFile = os.path.join(THIS_FILE_DIR, "../geometry/DVConstraintsSurface.stl")
     stlMesh = mesh.Mesh.from_file(stlFile)
     return [stlMesh.v0, stlMesh.v1 - stlMesh.v0, stlMesh.v2 - stlMesh.v0]
 
