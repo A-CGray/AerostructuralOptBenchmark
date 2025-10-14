@@ -11,8 +11,12 @@ import openmdao.api as om
 # from geometry.wingGeometry import wingGeometry
 
 # Import OpenConcept components
-from openconcept.aerodynamics.drag_jet_transport import ParasiteDragCoefficient_JetTransport
-from openconcept.aerodynamics import PolarDrag  # Corrected import and combined PolarDrag
+from openconcept.aerodynamics.drag_jet_transport import (
+    ParasiteDragCoefficient_JetTransport,
+)
+from openconcept.aerodynamics import (
+    PolarDrag,
+)  # Corrected import and combined PolarDrag
 from openconcept.utilities import AddSubtractComp, ElementMultiplyDivideComp, Integrator
 
 
@@ -24,17 +28,35 @@ class SuperBasicTurboFan(om.ExplicitComponent):
     def initialize(self):
         self.options.declare("num_nodes", default=1, types=int, desc="Number of analysis points")
         self.options.declare(
-            "rated_rho", default=1.22494, types=float, desc="Air density corresponding to rated thrust (kg/m^3)"
+            "rated_rho",
+            default=1.22494,
+            types=float,
+            desc="Air density corresponding to rated thrust (kg/m^3)",
         )
-        self.options.declare("tsfc", types=float, default=18.1e-6, desc="Thrust-specific fuel consumption (kg/N/s)")
+        self.options.declare(
+            "tsfc",
+            types=float,
+            default=18.1e-6,
+            desc="Thrust-specific fuel consumption (kg/N/s)",
+        )
 
     def setup(self):
         nn = self.options["num_nodes"]
 
         # Inputs
         self.add_input("throttle", shape=(nn,), desc="Engine throttle (0 to 1)", units=None)
-        self.add_input("ac|propulsion|engine|rating", shape=(), desc="Rated thrust of the engine (N)", units="N")
-        self.add_input("fltcond|rho", shape=(nn,), desc="Air density at flight condition (kg/m^3)", units="kg/m**3")
+        self.add_input(
+            "ac|propulsion|engine|rating",
+            shape=(),
+            desc="Rated thrust of the engine (N)",
+            units="N",
+        )
+        self.add_input(
+            "fltcond|rho",
+            shape=(nn,),
+            desc="Air density at flight condition (kg/m^3)",
+            units="kg/m**3",
+        )
 
         # Outputs
         self.add_output("thrust", shape=(nn,), desc="Thrust produced by the engine (N)", units="N")
@@ -91,7 +113,10 @@ class STWAircraftModel(om.Group):
     def initialize(self):
         self.options.declare("num_nodes", default=1, types=int, desc="Number of analysis points")
         self.options.declare(
-            "flight_phase", default=None, types=str, desc="Current flight phase (e.g., 'cruise', 'takeoff')"
+            "flight_phase",
+            default=None,
+            types=str,
+            desc="Current flight phase (e.g., 'cruise', 'takeoff')",
         )
 
     def setup(self):
@@ -116,12 +141,17 @@ class STWAircraftModel(om.Group):
                 vec_size=[1, nn, 1],
                 scaling_factors=[1, 1, -1],
             ),
-            promotes_inputs=[("num_engines", "ac|propulsion|num_engines"), "propulsor_active"],
+            promotes_inputs=[
+                ("num_engines", "ac|propulsion|num_engines"),
+                "propulsor_active",
+            ],
         )
         self.set_input_defaults("num_engine_calc.one", 1.0)
 
         prop_mult = self.add_subsystem(
-            "propulsion_multiplier", ElementMultiplyDivideComp(), promotes_outputs=["thrust"]
+            "propulsion_multiplier",
+            ElementMultiplyDivideComp(),
+            promotes_outputs=["thrust"],
         )
         prop_mult.add_equation(
             output_name="thrust",
@@ -141,7 +171,10 @@ class STWAircraftModel(om.Group):
         # This hacky thing is necessary to enable two equations to pull from the same input
         self.connect(
             "num_engine_calc.num_active_engines",
-            ["propulsion_multiplier.num_active_engines_1", "propulsion_multiplier.num_active_engines_2"],
+            [
+                "propulsion_multiplier.num_active_engines_1",
+                "propulsion_multiplier.num_active_engines_2",
+            ],
         )
 
         # ==============================================================================
@@ -149,7 +182,8 @@ class STWAircraftModel(om.Group):
         # ==============================================================================
         # -------------- Integrate fuel burn --------------
         integ = self.add_subsystem(
-            "fuel_burn_integ", Integrator(num_nodes=nn, diff_units="s", method="simpson", time_setup="duration")
+            "fuel_burn_integ",
+            Integrator(num_nodes=nn, diff_units="s", method="simpson", time_setup="duration"),
         )
         integ.add_integrand(
             "fuel_burn",

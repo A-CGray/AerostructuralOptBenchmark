@@ -2,7 +2,12 @@ from baseclasses import AeroProblem
 from typing import List, Optional
 
 
-VALID_MASS_CONFIGS = ["landingGrossMass", "takeoffMass", "midCruiseMass", "cruiseStartMass"]
+VALID_MASS_CONFIGS = [
+    "landingGrossMass",
+    "takeoffMass",
+    "midCruiseMass",
+    "cruiseStartMass",
+]
 
 
 class FlightPoint(AeroProblem):

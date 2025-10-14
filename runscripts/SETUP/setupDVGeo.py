@@ -107,7 +107,13 @@ def setupDVGeo(
             pass
         top.connect("twist", f"{geoCompName}.twist")
         if addGeoDVs:
-            top.add_design_var("twist", lower=-20.0, upper=20.0, scaler=dvScaleFactor * 1e-1, units="deg")
+            top.add_design_var(
+                "twist",
+                lower=-20.0,
+                upper=20.0,
+                scaler=dvScaleFactor * 1e-1,
+                units="deg",
+            )
 
     if args.taper:
         dvName = "taper"
@@ -355,7 +361,11 @@ def setupDVGeo(
             # --- Leading edge radius constraint ---
             try:  # This fails on the super coarse mesh so we'll just ignore it
                 DVGeoComp.nom_addLERadiusConstraints(
-                    "LERadius", LECoords, nSpan=20, axis=projectionDir, chordDir=chordDir
+                    "LERadius",
+                    LECoords,
+                    nSpan=20,
+                    axis=projectionDir,
+                    chordDir=chordDir,
                 )
                 top.add_constraint(f"{geoCompName}.LERadius", lower=0.9)
             except Exception:

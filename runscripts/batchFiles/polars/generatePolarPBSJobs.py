@@ -26,7 +26,12 @@ for level, meshSize in zip(levels, meshSizes):
     runCommand = f"python adflowPolar.py --level {level} --output {outputDir} --task polar"
     runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-    jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+    jobBody = [
+        f"mkdir -p {fullOutputDir}",
+        f"cp {jobName}.pbs {fullOutputDir}/",
+        f"cd {runDir}",
+        runCommand,
+    ]
     jobBody = [f"\n{line}" for line in jobBody]
 
     nas.write_job_file(

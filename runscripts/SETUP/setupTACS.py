@@ -344,10 +344,12 @@ def element_callback(
     )
     if usePlyFractionDVs:
         con.setPanelPlyFractionBounds(
-            defaultPlyFractionMin * np.ones(numPlies), defaultPlyFractionMax * np.ones(numPlies)
+            defaultPlyFractionMin * np.ones(numPlies),
+            defaultPlyFractionMax * np.ones(numPlies),
         )
         con.setStiffenerPlyFractionBounds(
-            defaultPlyFractionMin * np.ones(numPlies), defaultPlyFractionMax * np.ones(numPlies)
+            defaultPlyFractionMin * np.ones(numPlies),
+            defaultPlyFractionMax * np.ones(numPlies),
         )
     con.setStiffenerPitchBounds(stiffenerPitchMin, stiffenerPitchMax)
     con.setPanelThicknessBounds(panelThicknessMin, defaultPanelThicknessMax)

@@ -23,7 +23,15 @@ import os
 
 
 def getOptOptions(
-    alg, outputDir, majIterLimit, hessianUpdate, initPenalty, violLimit, stepLimit, feasibility, optimality
+    alg,
+    outputDir,
+    majIterLimit,
+    hessianUpdate,
+    initPenalty,
+    violLimit,
+    stepLimit,
+    feasibility,
+    optimality,
 ):
     if alg.lower() == "snopt":
         return {

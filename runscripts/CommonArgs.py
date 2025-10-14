@@ -18,8 +18,16 @@ parser = argparse.ArgumentParser()
 
 # --- General options ---
 parser.add_argument("--output", type=str, default="debug", help="Output directory")
-parser.add_argument("--noFiles", action="store_true", help="Flag to turn off the writing of solution files")
-parser.add_argument("--noRecorder", action="store_true", help="Flag to turn off the the use of the OpenMDAO recorder")
+parser.add_argument(
+    "--noFiles",
+    action="store_true",
+    help="Flag to turn off the writing of solution files",
+)
+parser.add_argument(
+    "--noRecorder",
+    action="store_true",
+    help="Flag to turn off the the use of the OpenMDAO recorder",
+)
 parser.add_argument(
     "--initDVs",
     type=str,
@@ -34,11 +42,19 @@ parser.add_argument(
     default=[],
     help="Similar to `initDVs` except that these DVs will be set after an initial call of `run_model` so that they're not used during initialisation. You can pass multiple paths in which case later files will overwrite DVs from earlier files",
 )
-parser.add_argument("--restartDict", type=str, default=None, help="SNOPT restart dictionary to use for a hot start")
+parser.add_argument(
+    "--restartDict",
+    type=str,
+    default=None,
+    help="SNOPT restart dictionary to use for a hot start",
+)
 
 # --- Solver options ---
 parser.add_argument(
-    "--tolFactor", type=float, default=1.0, help="Factor to scale the default convergence tolerances by"
+    "--tolFactor",
+    type=float,
+    default=1.0,
+    help="Factor to scale the default convergence tolerances by",
 )
 
 # --- Optimiser Options ---

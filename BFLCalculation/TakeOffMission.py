@@ -91,12 +91,19 @@ class TakeoffAnalysis(FullMissionAnalysis):
         v0v1 = self.add_subsystem(
             "v0v1",
             GroundRollPhase(num_nodes=nn, aircraft_model=acmodelclass, flight_phase="v0v1"),
-            promotes_inputs=["ac|*", "takeoff|v1", ("fltcond|TempIncrement", "takeoff|TempIncrement")],
+            promotes_inputs=[
+                "ac|*",
+                "takeoff|v1",
+                ("fltcond|TempIncrement", "takeoff|TempIncrement"),
+            ],
         )
         v1vr = self.add_subsystem(
             "v1vr",
             GroundRollPhase(num_nodes=nn, aircraft_model=acmodelclass, flight_phase="v1vr"),
-            promotes_inputs=["ac|*", ("fltcond|TempIncrement", "takeoff|TempIncrement")],
+            promotes_inputs=[
+                "ac|*",
+                ("fltcond|TempIncrement", "takeoff|TempIncrement"),
+            ],
         )
         self.connect("takeoff|v1", "v1vr.fltcond|Utrue_initial")
         self.connect("v0v1.range_final", "v1vr.range_initial")
@@ -104,13 +111,19 @@ class TakeoffAnalysis(FullMissionAnalysis):
             rotate = self.add_subsystem(
                 "rotate",
                 RobustRotationPhase(num_nodes=nn, aircraft_model=acmodelclass, flight_phase="rotate"),
-                promotes_inputs=["ac|*", ("fltcond|TempIncrement", "takeoff|TempIncrement")],
+                promotes_inputs=[
+                    "ac|*",
+                    ("fltcond|TempIncrement", "takeoff|TempIncrement"),
+                ],
             )
         elif self.options["transition_method"] == "ode":
             rotate = self.add_subsystem(
                 "rotate",
                 RotationPhase(num_nodes=nn, aircraft_model=acmodelclass, flight_phase="rotate"),
-                promotes_inputs=["ac|*", ("fltcond|TempIncrement", "takeoff|TempIncrement")],
+                promotes_inputs=[
+                    "ac|*",
+                    ("fltcond|TempIncrement", "takeoff|TempIncrement"),
+                ],
             )
             self.connect("v1vr.fltcond|Utrue_final", "rotate.fltcond|Utrue_initial")
         else:
@@ -121,7 +134,11 @@ class TakeoffAnalysis(FullMissionAnalysis):
         v1v0 = self.add_subsystem(
             "v1v0",
             GroundRollPhase(num_nodes=nn, aircraft_model=acmodelclass, flight_phase="v1v0"),
-            promotes_inputs=["ac|*", "takeoff|v1", ("fltcond|TempIncrement", "takeoff|TempIncrement")],
+            promotes_inputs=[
+                "ac|*",
+                "takeoff|v1",
+                ("fltcond|TempIncrement", "takeoff|TempIncrement"),
+            ],
         )
         self.connect("v0v1.range_final", "v1v0.range_initial")
         self.connect("v1v0.range_final", "bfl.distance_abort")

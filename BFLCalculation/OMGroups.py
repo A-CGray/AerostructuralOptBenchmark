@@ -45,7 +45,10 @@ STWData = {
                 "e": {"value": 0.9},
             },  # total guess
             "airfoil_Cl_max": {"value": 1.25},  # total guess
-            "takeoff_flap_deg": {"value": aircraftSpecs["takeoffFlapSetting"], "units": "deg"},
+            "takeoff_flap_deg": {
+                "value": aircraftSpecs["takeoffFlapSetting"],
+                "units": "deg",
+            },
         },
         "propulsion": {
             "engine": {
@@ -57,11 +60,17 @@ STWData = {
         },
         "geom": {
             "wing": {
-                "S_ref": {"value": 2 * wingGeometry["wing"]["planformArea"], "units": "m**2"},
+                "S_ref": {
+                    "value": 2 * wingGeometry["wing"]["planformArea"],
+                    "units": "m**2",
+                },
                 "AR": {"value": wingGeometry["wing"]["aspectRatio"]},
                 "taper": {"value": wingGeometry["wing"]["taperRatio"]},
                 "toverc": {"value": 0.12},
-                "c4sweep": {"value": wingGeometry["wing"]["quarterChordSweep"], "units": "deg"},
+                "c4sweep": {
+                    "value": wingGeometry["wing"]["quarterChordSweep"],
+                    "units": "deg",
+                },
             },
             "fuselage": {
                 "S_wet": {"value": wingGeometry["fuselage"]["area"], "units": "m**2"},
@@ -69,13 +78,19 @@ STWData = {
                 "height": {"value": wingGeometry["fuselage"]["width"], "units": "m"},
             },
             "hstab": {
-                "S_ref": {"value": 2 * wingGeometry["hTail"]["planformArea"], "units": "m**2"},
+                "S_ref": {
+                    "value": 2 * wingGeometry["hTail"]["planformArea"],
+                    "units": "m**2",
+                },
                 "AR": {"value": wingGeometry["hTail"]["aspectRatio"]},
                 "taper": {"value": wingGeometry["hTail"]["taperRatio"]},
                 "toverc": {"value": wingGeometry["hTail"]["toverc"]},
             },
             "vstab": {
-                "S_ref": {"value": wingGeometry["vTail"]["planformArea"], "units": "m**2"},
+                "S_ref": {
+                    "value": wingGeometry["vTail"]["planformArea"],
+                    "units": "m**2",
+                },
                 "AR": {"value": wingGeometry["vTail"]["aspectRatio"]},
                 "taper": {"value": wingGeometry["vTail"]["taperRatio"]},
                 "toverc": {"value": wingGeometry["vTail"]["toverc"]},
@@ -293,10 +308,18 @@ if __name__ == "__main__":
     # =============== Print some useful outputs ================
     print_vars = [
         {"var": "ac|weights|MTOW", "name": "MTOW", "units": "kg"},
-        {"var": "bfl.distance_continue", "name": "Balanced field length", "units": "ft"},
+        {
+            "var": "bfl.distance_continue",
+            "name": "Balanced field length",
+            "units": "ft",
+        },
         {"var": "takeoff|v1", "name": "V1 speed", "units": "kn"},
         {"var": "bfl.takeoff|vr", "name": "Rotation speed", "units": "kn"},
-        {"var": "ac|aero|takeoff_flap_deg", "name": "Optimal flap setting", "units": "deg"},
+        {
+            "var": "ac|aero|takeoff_flap_deg",
+            "name": "Optimal flap setting",
+            "units": "deg",
+        },
     ]
     print("\n=======================================================================\n")
     for var in print_vars:
@@ -334,7 +357,12 @@ if __name__ == "__main__":
         ax.set_xticks(xTicks)
 
     takeoff_fig.legend(
-        [r"V0 $\rightarrow$ V1", r"V1 $\rightarrow$ Vr", "Rotate", r"V1 $\rightarrow$ V0"],
+        [
+            r"V0 $\rightarrow$ V1",
+            r"V1 $\rightarrow$ Vr",
+            "Rotate",
+            r"V1 $\rightarrow$ V0",
+        ],
         loc=(0.067, 0.6),
         fontsize="small",
     )

@@ -175,7 +175,12 @@ flightPointSets = {
         highAltHighSpeedPullUp,
         highAltHighSpeedPushDown,
     ],
-    "maneuverOnly": [seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown, taxiBumpPositive, taxiBumpNegative],
+    "maneuverOnly": [
+        seaLevelLowSpeedPullUp,
+        seaLevelLowSpeedPushDown,
+        taxiBumpPositive,
+        taxiBumpNegative,
+    ],
     "buffet": [buffetHighLift, buffetHighSpeed],
     "cruise+buffet": [standardCruise, buffetHighLift, buffetHighSpeed],
     "5pt-buffet": [

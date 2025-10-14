@@ -4,7 +4,13 @@ import numpy as np
 
 runTime = 48
 
-nas = PBS.nas(group_list="a1556", proc_type="sky", time=runTime, queue_name="long", profile_file="")
+nas = PBS.nas(
+    group_list="a1556",
+    proc_type="sky",
+    time=runTime,
+    queue_name="long",
+    profile_file="",
+)
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -43,7 +49,12 @@ for linType in ["Linear", "Nonlinear"]:
         runCommand = f"python aeroStructRun-MultipointParallel.py --task opt --optType structMass --initPenalty 0.1 --violLimit 0.05 --timeLimit {(runTime * 3600 - 600)} --addStructDVs --flightPointSet maneuverOnly --procs {procString} --aeroLevel {level} --structLevel 1 {linOption} --initDVs {initDVs} --output {outputDir}"
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-        jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+        jobBody = [
+            f"mkdir -p {fullOutputDir}",
+            f"cp {jobName}.pbs {fullOutputDir}/",
+            f"cd {runDir}",
+            runCommand,
+        ]
         jobBody = [f"\n{line}" for line in jobBody]
 
         nas.write_job_file(

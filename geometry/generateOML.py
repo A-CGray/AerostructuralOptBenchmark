@@ -97,7 +97,11 @@ elif args.ffdType == "advanced":
     # Fancier FFD
     # ==============================================================================
     # This is a more complex FFD that should allw me to stop the wing root and SOB moving in the spanwise direction
-    fileNames = ["wing-ffd-advanced-coarse.xyz", "wing-ffd-advanced-med.xyz", "wing-ffd-advanced-fine.xyz"]
+    fileNames = [
+        "wing-ffd-advanced-coarse.xyz",
+        "wing-ffd-advanced-med.xyz",
+        "wing-ffd-advanced-fine.xyz",
+    ]
 
     # The first segment of the FFD will contain 3 sections around the root, purely to enforce that the wing root does
     # not move away from the symmetry plane

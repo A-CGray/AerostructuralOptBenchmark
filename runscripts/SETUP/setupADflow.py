@@ -11,7 +11,16 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # I/O Parameters
         "gridFile": meshFile,
         "outputDirectory": outputDir,
-        "monitorvariables": ["cpu", "resrho", "resmom", "resturb", "cl", "cd", "yplus", "sepsensor"],
+        "monitorvariables": [
+            "cpu",
+            "resrho",
+            "resmom",
+            "resturb",
+            "cl",
+            "cd",
+            "yplus",
+            "sepsensor",
+        ],
         "surfaceVariables": [
             "cp",
             "vx",

@@ -4,7 +4,13 @@ import numpy as np
 
 runTime = 72
 
-nas = PBS.nas(group_list="a1607", proc_type="sky", time=runTime, queue_name="long", profile_file="")
+nas = PBS.nas(
+    group_list="a1607",
+    proc_type="sky",
+    time=runTime,
+    queue_name="long",
+    profile_file="",
+)
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -22,7 +28,9 @@ for rangeScale in rangeScales:
         for linType in ["Linear", "Nonlinear"]:
             initDVs = os.path.join(runDir, "DVs", f"VariablePlanformOpt-L2-{linType}.pkl")
             restartDict = os.path.join(
-                baseOutputDir, f"VariablePlanformOpt/VariablePlanformOpt-L2-{linType}-Part3", "SNOPTRestart.pkl"
+                baseOutputDir,
+                f"VariablePlanformOpt/VariablePlanformOpt-L2-{linType}-Part3",
+                "SNOPTRestart.pkl",
             )
             idealNumProcs = 3 * meshSize // cellsPerProc
             numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
@@ -62,7 +70,12 @@ for rangeScale in rangeScales:
 --output {outputDir}"""
             runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-            jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+            jobBody = [
+                f"mkdir -p {fullOutputDir}",
+                f"cp {jobName}.pbs {fullOutputDir}/",
+                f"cd {runDir}",
+                runCommand,
+            ]
             jobBody = [f"\n{line}" for line in jobBody]
 
             nas.write_job_file(
