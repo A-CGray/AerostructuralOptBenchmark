@@ -12,7 +12,7 @@ cellsPerProc = int(10e3)
 runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
-for level, meshSize in zip(levels, meshSizes):
+for level, meshSize in zip(levels, meshSizes, strict=True):
     idealNumProcs = meshSize // cellsPerProc
     numNodes = max(1, idealNumProcs // nas.ncpus_per_node)
     numNodes = min(10, numNodes)

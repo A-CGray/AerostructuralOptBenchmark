@@ -78,7 +78,7 @@ if args.ffdType == "basic":
     # Generate fitted FFD
     # ==============================================================================
     fileNames = ["wing-ffd-coarse.xyz", "wing-ffd-med.xyz", "wing-ffd-fine.xyz"]
-    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames):
+    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames, strict=True):
         createFittedWingFFD(
             wingSurface,
             surfFormat="point-vector",
@@ -137,7 +137,7 @@ elif args.ffdType == "advanced":
     ffdLEList[5] = wingLEList[-1]
     ffdTEList[5] = wingTEList[-1]
 
-    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames):
+    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames, strict=True):
         createFittedWingFFD(
             wingSurface,
             surfFormat="point-vector",

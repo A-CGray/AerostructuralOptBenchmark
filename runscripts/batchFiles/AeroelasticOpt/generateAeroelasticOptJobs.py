@@ -23,7 +23,7 @@ baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 for linType in ["Linear", "Nonlinear"]:
     initDVs = os.path.join(runDir, "DVs", f"StructOpt-L1-{linType}.pkl")
-    for level, meshSize in zip(levels, meshSizes):
+    for level, meshSize in zip(levels, meshSizes, strict=True):
         idealNumProcs = 2 * meshSize // cellsPerProc
         numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
         numNodes = min(20, numNodes)

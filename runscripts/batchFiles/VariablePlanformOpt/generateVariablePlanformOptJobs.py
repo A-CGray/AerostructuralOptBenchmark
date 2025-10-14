@@ -22,7 +22,7 @@ runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 for linType in ["Linear", "Nonlinear"]:
-    for level, meshSize in zip(levels, meshSizes):
+    for level, meshSize in zip(levels, meshSizes, strict=True):
         idealNumProcs = 5 * meshSize // cellsPerProc
         numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
         numNodes = min(20, numNodes)
