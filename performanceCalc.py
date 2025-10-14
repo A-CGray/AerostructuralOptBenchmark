@@ -11,20 +11,31 @@ Basic aircraft mission performance calculations
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
+import os
+import sys
 
 # ==============================================================================
 # External Python modules
 # ==============================================================================
 import openmdao.api as om
 import numpy as np
+import jax
+import jax.numpy as jnp
+
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
+from AircraftSpecs.FlightPoint import FlightPoint
 
 # ==============================================================================
 # Individual components
 # ==============================================================================
+
+jax.config.update("jax_enable_x64", True)  # Make jax use double precision
+# Need to set XLA_PYTHON_CLIENT_PREALLOCATE=false otherwise every instance of jax will try to pre-allocate 75% of GPU
+# memory (even when not using GPU)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 # --- Mass calculation components ---
@@ -360,11 +371,9 @@ class WingLoadingComp(om.ExplicitComponent):
 class AirframeMassGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
-        self.options.declare("flightPoints", types=list)
 
     def setup(self):
         self.specs = self.options["aircraftSpecs"]
-        self.flightPoints = self.options["flightPoints"]
 
         # --- Compute wing mass from wingbox mass ---
         wingMassComp = WingMassRegressionComp()
@@ -385,17 +394,17 @@ class AirframeMassGroup(om.Group):
 class FuelBurnGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
-        self.options.declare("flightPoints", types=list)
+        self.options.declare("flightPoint")
 
     def setup(self):
         self.specs = self.options["aircraftSpecs"]
-        self.flightPoints = self.options["flightPoints"]
+        self.flightPoint = self.options["flightPoint"]
 
         # --- Drag correction ---
         addedDragComp = CorrectedDragComp(
             extraDragCoeff=self.specs["extraDragCoeff"],
             wingArea=self.specs["refArea"],
-            dynPressure=self.flightPoints[0].q,
+            dynPressure=self.flightPoint.q,
         )
         self.add_subsystem(
             "dragCorrection", addedDragComp, promotes_inputs=[("drag", "cruiseDrag")], promotes_outputs=["*"]
@@ -407,7 +416,7 @@ class FuelBurnGroup(om.Group):
             R=self.specs["range"],
             tsfc=self.specs["tsfc"],
             climbAngle=0.0,
-            v=self.flightPoints[0].V,
+            v=self.flightPoint.V,
         )
         self.add_subsystem(
             "CruiseFuelBurn",
@@ -427,7 +436,7 @@ class FuelBurnGroup(om.Group):
         self.add_subsystem(
             "climbFuelBurn",
             climbFuelburnComp,
-            promotes_outputs=[("initMass", "TakeoffMass")],
+            promotes_outputs=[("initMass", "takeoffMass")],
             promotes_inputs=[("lift", "cruiseLift")],
         )
         self.connect("cruiseStartMass", "climbFuelBurn.finalMass")
@@ -435,112 +444,266 @@ class FuelBurnGroup(om.Group):
 
         # Finally compute the fuelburn as the difference between the takeoff mass and the landing gross mass
         totalFuelBurnComp = om.AddSubtractComp(
-            output_name="TotalFuelBurn", input_names=["TakeoffMass", "landingGrossMass"], scaling_factors=[1.0, -1.0]
+            output_name="totalFuelBurn", input_names=["takeoffMass", "landingGrossMass"], scaling_factors=[1.0, -1.0]
         )
         self.add_subsystem("totalFuelBurnComp", totalFuelBurnComp, promotes=["*"])
 
 
-# ==============================================================================
-# Top level group combining all performance components/groups
-# ==============================================================================
-class AircraftPerformanceGroup(om.Group):
+class FuelDistributionComp(om.JaxExplicitComponent):
+    """Given the total fuel mass required to be stored in the wingbox, and the volumes of each rib bay, compute the mass
+    of fuel in each bay and the fraction of the total fuel volume used
+    """
+
     def initialize(self):
-        self.options.declare("aircraftSpecs", types=dict)
-        self.options.declare("flightPoints", types=list)
+        self.options.declare("fuelDensity", types=float, desc="Density of fuel")
+        self.options.declare(
+            "wingboxVolumeFraction", types=float, desc="Fraction of each rib bay assumed to be fuel tank"
+        )
+        self.options.declare("numRibBays", types=int)
+        self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
 
     def setup(self):
-        self.specs = self.options["aircraftSpecs"]
-        self.flightPoints = self.options["flightPoints"]
+        self.add_input("bayVolumes", shape=self.options["numRibBays"], units="m**3")
+        self.add_input("fuelMass", units="kg")
+        self.add_output("bayFuelMasses", copy_shape="bayVolumes", units="kg")
+        self.add_output("wingboxVolume")
 
-        massComp = AirframeMassGroup(
-            aircraftSpecs=self.specs,
-            flightPoints=self.flightPoints,
+    def get_self_statics(self):
+        return (
+            self.options["fuelDensity"],
+            self.options["wingboxVolumeFraction"],
+            self.options["maxSmoothingRelError"],
         )
-        self.add_subsystem("airframeMass", massComp, promotes=["landingGrossMass", "wingboxMass"])
 
-        # We can only compute the fuel burn, mid cruise mass, wing loading, and fuel volume if we have a cruise point
-        hasCruisePoint = any("cruise" in flightPoint.name.lower() for flightPoint in self.flightPoints)
+    def compute_primal(self, bayVolumes, fuelMass):
+        volFrac = self.options["wingboxVolumeFraction"]
+        wingboxVolume = jnp.sum(bayVolumes)
 
-        if hasCruisePoint:
-            fuelBurnComp = FuelBurnGroup(
-                aircraftSpecs=self.specs,
-                flightPoints=self.flightPoints,
-            )
-            self.add_subsystem(
-                "fuelBurn",
-                fuelBurnComp,
-                promotes_inputs=["cruiseDrag", "cruiseLift", "landingGrossMass"],
-                promotes_outputs=["TotalFuelBurn", "cruiseStartMass", "TakeoffMass"],
-            )
+        # The calculations below are a bit confusing, they could be done more simply with a for loop and some if
+        # statements but then the code wouldn't be jittable/differentiable by jax
 
-            # --- Compute the mid-cruise mass ---
-            cruiseMass = MidSegmentMassComp()
-            self.add_subsystem("midCruiseMass", cruiseMass, promotes_outputs=[("midSegmentMass", "midCruiseMass")])
-            self.connect("landingGrossMass", "midCruiseMass.finalMass")
-            self.connect("cruiseStartMass", "midCruiseMass.initialMass")
+        # Start by assuming all bays are full
+        bayFullFuelMasses = jnp.array(bayVolumes * volFrac * self.options["fuelDensity"]) * 2
 
-            # --- Wingbox volume computation ---
-            fuelVolumeComp = FuelTankUsageComp(
-                reserveFuelMass=self.specs["reserveFuelMass"],
-                fuelDensity=self.specs["fuelDensity"],
-                wingboxVolumeFraction=self.specs["wingboxFuelVolumeFraction"],
-                auxTankVolume=self.specs["auxFuelVolume"],
-            )
-            self.add_subsystem(
-                "fuelVolumeComp", fuelVolumeComp, promotes_outputs=["*"], promotes_inputs=["wingboxVolume"]
-            )
-            self.connect("TotalFuelBurn", "fuelVolumeComp.fuelBurn")
+        # Track the cumulative sum of fuel in the bays (flip the array so we are effectively filling from the wing tip inwards)
+        cumulativeFuelMasses = jnp.flip(jnp.cumsum(jnp.flip(bayFullFuelMasses)))
 
-            # --- Wing loading constraint ---
-            wingLoadingComp = WingLoadingComp()
-            self.add_subsystem("wingLoadingComp", wingLoadingComp, promotes_outputs=["*"], promotes_inputs=["wingArea"])
-            self.connect("TakeoffMass", "wingLoadingComp.MTOM")
+        # Compute how much fuel is left to store if we fill up to each bay
+        remainingFuelMass = fuelMass - cumulativeFuelMasses
 
-        # --- Add a lift constrain for each flight point ---
-        for flightPoint in self.flightPoints:
-            name = flightPoint.name
-            hasFuelInput = False
-            if "cruise" in flightPoint.name.lower():
-                # This is a cruise flight point, so the target lift is the mid-cruise weight
-                flightPointMassVariable = "midCruiseMass"
-                LiftConstraint = LiftConstraintComp(loadFactor=flightPoint.loadFactor)
-            elif "buffet" in flightPoint.name.lower():
-                # Buffet flight points are done at max cruise mass
-                flightPointMassVariable = "cruiseStartMass" if hasCruisePoint else "landingGrossMass"
-                LiftConstraint = LiftConstraintComp(loadFactor=flightPoint.loadFactor)
-            else:
-                # This is a maneuver flight point, so the target lift is the landing gross weight + a fraction of the fuel weight
-                hasFuelInput = flightPoint.fuelFraction != 0
-                flightPointMassVariable = "landingGrossMass"
-                LiftConstraint = LiftConstraintComp(
-                    loadFactor=flightPoint.loadFactor, fuelFraction=flightPoint.fuelFraction if hasFuelInput else None
+        # If we add the remaining fuel mass to the full bay mass, then we will get the amount of fuel that would need to
+        # be stored in each bay to reach the required fuel mass, assuming all outboard tanks are filled first. For most
+        # bays this value will either be greater than the amount of fuel they can store (indicating we need to fill the
+        # bays inboard of this one), or negative (indicating we don't need to fill this bay). The only bay that will
+        # have a positive value less than the full bay mass is the bay where we stop filling. To get the actual mass in
+        # each bay, we therefore need to clip these values between 0 and the full bay mass. However, we want to use a
+        # smooth version of the clip function to avoid discontinuities in the derivatives.
+
+        bayFuelMasses = bayFullFuelMasses + remainingFuelMass
+
+        bayFuelMasses = 0.5 * self.smoothClip(
+            bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=self.options["maxSmoothingRelError"]
+        )
+
+        return bayFuelMasses, wingboxVolume
+
+    @staticmethod
+    def KSMax2(a, b, rho):
+        """Elementwise KS maximum of two arrays
+
+        Parameters
+        ----------
+        a : array_like
+            First array
+        b : array_like
+            Second array
+        rho : float/complex or array_like
+            Rho value for KS aggregation, higher values give a closer, but less smooth, approximation to the true max
+
+        Returns
+        -------
+        array_like
+            Elementwise KS maximum of a and b
+        """
+        minVal = jnp.minimum(a, b)
+        maxVal = jnp.maximum(a, b)
+        return maxVal + 1 / rho * jnp.log(1 + jnp.exp(rho * (minVal - maxVal)))
+
+    @staticmethod
+    def smoothClip(x, lb, ub, maxRelError=1e-4):
+        """A smooth approximation to the clip function using KS aggregation
+
+        Parameters
+        ----------
+        x : array_like
+            Values to be clipped
+        lb : float/complex or array_like
+            Lower bound, can be a single value or an array of same shape as x
+        ub : float/complex
+            Upper bound, can be a single value or an array of same shape as x
+        maxRelError : float/complex
+            The maximum error in this clipping will occur when x is at the lb or ub value. This parameter is used to
+            pick the rho value used in the KS aggregation such that the error at these points is less than maxRelError,
+            relative to the range (ub - lb).
+
+        Returns
+        -------
+        float/complex
+            Clipped values
+        """
+        # Convert lb and ub to arrays if they are single values
+        if np.isscalar(lb):
+            lb = jnp.full_like(x, lb)
+        if np.isscalar(ub):
+            ub = jnp.full_like(x, ub)
+
+        # The maximum error in the two element KSMax function is 1/rho * log(2), which is roughly 0.7/rho and occurs when
+        # the two inputs are equal. To be conservative, we will therefore choose rho = 1 / maxAllowedError
+        width = ub - lb
+        maxError = maxRelError * width
+        rho = 1 / maxError
+
+        # First do min of x and ub, KSMin = -KSMax(-f)
+        clipped = -FuelDistributionComp.KSMax2(-x, -ub, rho)
+        return FuelDistributionComp.KSMax2(clipped, lb, rho)
+
+
+class FuelDistributionGroup(om.Group):
+    def initialize(self):
+        self.options.declare("aircraftSpecs", types=dict)
+        self.options.declare("numRibBays", types=int)
+        self.options.declare("volumeVarName", types=str, desc="Name of the variable containing the rib bay volumes")
+        self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
+
+    def setup(self):
+        specs = self.options["aircraftSpecs"]
+
+        # Need a component to mux the scalar bay volumes computed by the geometry component into an array
+        bayVolMuxer = om.MuxComp(vec_size=self.options["numRibBays"])
+        bayVolMuxer.add_var(self.options["volumeVarName"], units="m**3")
+        self.add_subsystem(
+            "bayVolMuxer",
+            bayVolMuxer,
+            promotes=["*"],
+        )
+
+        # This is the component that computes the fuel masses in each bay from the total fuel mass and the bay volumes
+        # fuelMass input will be automatically connected to the dvSys output through promotion
+        self.add_subsystem(
+            "fuelMassDistribution",
+            FuelDistributionComp(
+                fuelDensity=specs["fuelDensity"],
+                wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
+                numRibBays=self.options["numRibBays"],
+                maxSmoothingRelError=self.options["maxSmoothingRelError"],
+            ),
+            promotes_outputs=["*"],
+            promotes_inputs=["fuelMass", ("bayVolumes", self.options["volumeVarName"])],
+        )
+
+
+class LiftConstraintGroup(om.Group):
+    def initialize(self):
+        self.options.declare("aircraftSpecs", types=dict)
+        self.options.declare("flightPointSet", types=list)
+
+    def setup(self):
+        flightPointSet = self.options["flightPointSet"]
+
+        for fp in flightPointSet:
+            if isinstance(fp, FlightPoint):
+                if fp.massConfig is not None:
+                    fuelFraction = None
+                    inputMassVar = fp.massConfig
+                else:
+                    fuelFraction = fp.fuelFraction
+                    inputMassVar = f"{fp.name}_mass"
+                    self.add_subsystem(
+                        f"{fp.name}_mass",
+                        om.ExecComp(f"{inputMassVar} = landingGrossMass - fuelBurn * {fuelFraction}"),
+                        promotes=["*"],
+                    )
+
+                liftConComp = LiftConstraintComp(loadFactor=fp.loadFactor)
+                self.add_subsystem(
+                    f"{fp.name}LiftConstraint",
+                    liftConComp,
+                    promotes_inputs=[("mass", inputMassVar), ("lift", f"{fp.name}Lift")],
+                    promotes_outputs=[("liftDiff", f"{fp.name}LiftDiff")],
                 )
-            self.add_subsystem(
-                f"{name}LiftConstraint",
-                LiftConstraint,
-                promotes_inputs=[("lift", f"{name}Lift")],
-                promotes_outputs=[("liftDiff", f"{name}LiftDiff")],
-            )
-            self.connect(flightPointMassVariable, f"{name}LiftConstraint.mass")
 
-            if hasFuelInput:
-                self.connect("TotalFuelBurn", f"{name}LiftConstraint.fuelMass")
 
-        # --- Add buffet constraints for any buffet flight points, separated area must be below 4% of planform area ---
-        for flightPoint in self.flightPoints:
-            if "buffet" in flightPoint.name.lower():
-                buffetConstraintComp = om.AddSubtractComp(
-                    output_name=f"{flightPoint.name}BuffetCon",
-                    input_names=[f"{flightPoint.name}SepArea", "wingArea"],
-                    scaling_factors=[1, -0.04],
+class FuelConsistencyGroup(om.Group):
+    def initialize(self):
+        self.options.declare("aircraftSpecs", types=dict)
+        self.options.declare("flightPointSet", types=list)
+
+    def setup(self):
+        specs = self.options["aircraftSpecs"]
+        flightPointSet = self.options["flightPointSet"]
+
+        for fp in flightPointSet:
+            if fp.massConfig is not None:
+                execComp = om.ExecComp(
+                    f"fuelMassDiff = fuelMass - (aircraftMass - landingGrossMass + {specs['reserveFuelMass']})",
+                    fuelMass={"units": "kg"},
+                    aircraftMass={"units": "kg"},
+                    landingGrossMass={"units": "kg"},
+                    fuelMassDiff={"units": "kg"},
                 )
                 self.add_subsystem(
-                    f"{flightPoint.name}BuffetCon",
-                    buffetConstraintComp,
-                    promotes_inputs=["*"],
-                    promotes_outputs=["*"],
+                    f"{fp.name}FuelConsistency",
+                    execComp,
+                    promotes_inputs=[
+                        ("fuelMass", f"{fp.name}-fuelMass"),
+                        "landingGrossMass",
+                        ("aircraftMass", fp.massConfig),
+                    ],
+                    promotes_outputs=[("fuelMassDiff", f"{fp.name}FuelMassDiff")],
                 )
-                # self.connect(f"{flightPoint.name}SepArea", f"{flightPoint.name}BuffetCon.SepArea")
+            else:
+                execComp = om.ExecComp(
+                    f"fuelMassDiff = fuelMass - ({fp.fuelFraction} * fuelBurn + {specs['reserveFuelMass']})",
+                    promotes_inputs=[("fuelMass", f"{fp.name}-fuelMass"), "fuelBurn"],
+                    promotes_outputs=[("fuelMassDiff", f"{fp.name}FuelMassDiff")],
+                )
+
+
+class FuelAndMassConstraintGroup(om.Group):
+    def initialize(self):
+        self.options.declare("aircraftSpecs", types=dict)
+        self.options.declare("flightPointSet", types=list)
+
+    def setup(self):
+        specs = self.options["aircraftSpecs"]
+        self.add_subsystem(
+            "liftConstraints",
+            LiftConstraintGroup(
+                aircraftSpecs=specs,
+                flightPointSet=self.options["flightPointSet"],
+            ),
+            promotes=["*"],
+        )
+
+        self.add_subsystem(
+            "fuelConsistency",
+            FuelConsistencyGroup(
+                aircraftSpecs=specs,
+                flightPointSet=self.options["flightPointSet"],
+            ),
+            promotes=["*"],
+        )
+
+        self.add_subsystem(
+            "FuelTankUsage",
+            FuelTankUsageComp(
+                reserveFuelMass=specs["reserveFuelMass"],
+                fuelDensity=specs["fuelDensity"],
+                wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
+                auxTankVolume=specs["auxFuelVolume"],
+            ),
+            promotes=["*"],
+        )
 
 
 # Test the performance group derivatives
@@ -553,16 +716,9 @@ if __name__ == "__main__":
     from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
 
     prob = om.Problem()
-    prob.model = AircraftPerformanceGroup(aircraftSpecs=aircraftSpecs, flightPoints=flightPointSets["3pt"])
+    prob.model = FuelAndMassConstraintGroup(aircraftSpecs=aircraftSpecs, flightPointSet=flightPointSets["7pt"])
     prob.setup()
-    # Set some reasonable input values
-    prob.set_val("wingboxMass", 1000.0, units="kg")
-    prob.set_val("wingboxVolume", 6.0, units="m**3")
-    prob.set_val("wingArea", aircraftSpecs["refArea"], units="m**2")
-    for fp in flightPointSets["3pt"]:
-        prob.set_val(f"{fp.name}Lift", fp.loadFactor * aircraftSpecs["refMTOW"] * 9.81 / 2.0)
-    prob.set_val("cruiseDrag", aircraftSpecs["refMTOW"] * 9.81 / 2.0 / 20)
     prob.run_model()
     prob.model.list_outputs()
-    prob.check_partials(compact_print=True, form="central", step=1e-6)
-    om.n2(prob, show_browser=True)
+    prob.check_partials(compact_print=True, form="central", step=1e-8)
+    om.n2(prob, show_browser=False)

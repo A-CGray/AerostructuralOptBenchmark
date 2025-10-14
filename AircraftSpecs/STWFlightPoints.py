@@ -19,7 +19,7 @@ Definition of MACH Tutorial wing flight points
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from FlightPoint import FlightPoint
+from .FlightPoint import FlightPoint, LoadCase
 
 # ==============================================================================
 # Cruise conditions
@@ -30,8 +30,7 @@ CRUISE_MACH = 0.77
 standardCruise = FlightPoint(
     "cruise",
     loadFactor=1.0,
-    fuelFraction=1.0,
-    failureGroups=[],
+    massConfig="midCruiseMass",
     mach=CRUISE_MACH,
     altitude=CRUISE_ALTITUDE,
     alpha=3.25,
@@ -50,11 +49,13 @@ standardCruise = FlightPoint(
 # (https://www.ecfr.gov/current/title-14/part-25/section-25.335#p-25.335(b)(2))
 MAX_ALTITUDE = 11277.6  # 37,000 ft in meters
 MMO = 0.82
+# The aircraft has to satisfy the buffet requirements at all points during cruise, so we compute the buffet constaints in the worst-case mass configuration, the cruise start mass
+BUFFET_MASS_CONFIG = "cruiseStartMass"
 buffetHighLift = FlightPoint(
     "buffet_high_lift",
     loadFactor=1.3,
     fuelFraction=1.0,
-    failureGroups=[],
+    massConfig=BUFFET_MASS_CONFIG,
     mach=MMO,
     altitude=MAX_ALTITUDE,
     alpha=6.5,
@@ -64,8 +65,8 @@ buffetHighSpeed = FlightPoint(
     "buffet_high_speed",
     loadFactor=1.0,
     fuelFraction=1.0,
-    failureGroups=[],
-    mach=MMO+0.07,
+    massConfig=BUFFET_MASS_CONFIG,
+    mach=MMO + 0.07,
     altitude=MAX_ALTITUDE,
     alpha=4.25,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
@@ -80,14 +81,12 @@ buffetHighSpeed = FlightPoint(
 # I then boost the flight speed by 15% so that we're not trying to simulate the aircraft right at CL max
 SEALEVEL_VA_MACH = 0.398 * 1.15
 MANEUVER_ALTITUDE = 0.0
-MANEUVER_FUEL_LOAD_FRACTION = (
-    0.0  # Perform the maneuver with zero fuel mass since we are not modelling the fuel's inertial relief in TACS
-)
+MANEUVER_MASS_CONFIG = "landingGrossMass"
 
 seaLevelLowSpeedPullUp = FlightPoint(
     "mnver_sealevel_va_pullup",
     loadFactor=2.5,
-    fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
+    massConfig=MANEUVER_MASS_CONFIG,
     failureGroups=["l_skin", "u_skin", "spar", "rib"],
     mach=SEALEVEL_VA_MACH,
     altitude=MANEUVER_ALTITUDE,
@@ -98,7 +97,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
 seaLevelLowSpeedPushDown = FlightPoint(
     "mnver_sealevel_va_pushdown",
     loadFactor=-1.0,
-    fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
+    massConfig=MANEUVER_MASS_CONFIG,
     failureGroups=["l_skin"],
     mach=SEALEVEL_VA_MACH,
     altitude=MANEUVER_ALTITUDE,
@@ -120,7 +119,7 @@ HIGH_SPEED_MANEUVER_ALTITUDE = 7924.8  # 26,000 ft in m
 highAltHighSpeedPullUp = FlightPoint(
     "mnver_highAlt_vd_pullup",
     loadFactor=2.5,
-    fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
+    massConfig=MANEUVER_MASS_CONFIG,
     failureGroups=["l_skin", "u_skin", "spar", "rib"],
     mach=MMO + 0.07,
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
@@ -131,12 +130,29 @@ highAltHighSpeedPullUp = FlightPoint(
 highAltHighSpeedPushDown = FlightPoint(
     "mnver_highAlt_vc_pushdown",
     loadFactor=-1.0,
-    fuelFraction=MANEUVER_FUEL_LOAD_FRACTION,
+    massConfig=MANEUVER_MASS_CONFIG,
     failureGroups=["l_skin"],
     mach=CRUISE_MACH,
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=-5.8,
     evalFuncs=["lift", "drag", "cl", "cd"],
+)
+
+# ==============================================================================
+# Taxi Bump Conditions
+# ==============================================================================
+TAXI_BUMP_MASS_CONFIG = "takeoffMass"
+taxiBumpPositive = LoadCase(
+    "taxi_bump_positive",
+    loadFactor=2.0,
+    massConfig=TAXI_BUMP_MASS_CONFIG,
+    failureGroups=["l_skin", "u_skin", "spar", "rib"],
+)
+taxiBumpNegative = LoadCase(
+    "taxi_bump_negative",
+    loadFactor=-2.0,
+    massConfig=TAXI_BUMP_MASS_CONFIG,
+    failureGroups=["l_skin", "u_skin", "spar", "rib"],
 )
 
 # ==============================================================================
@@ -159,10 +175,7 @@ flightPointSets = {
         highAltHighSpeedPullUp,
         highAltHighSpeedPushDown,
     ],
-    "maneuverOnly": [
-        seaLevelLowSpeedPullUp,
-        seaLevelLowSpeedPushDown,
-    ],
+    "maneuverOnly": [seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown, taxiBumpPositive, taxiBumpNegative],
     "buffet": [buffetHighLift, buffetHighSpeed],
     "cruise+buffet": [standardCruise, buffetHighLift, buffetHighSpeed],
     "5pt-buffet": [
@@ -171,5 +184,14 @@ flightPointSets = {
         seaLevelLowSpeedPushDown,
         buffetHighLift,
         buffetHighSpeed,
+    ],
+    "7pt": [
+        standardCruise,
+        seaLevelLowSpeedPullUp,
+        seaLevelLowSpeedPushDown,
+        buffetHighLift,
+        buffetHighSpeed,
+        taxiBumpPositive,
+        taxiBumpNegative,
     ],
 }

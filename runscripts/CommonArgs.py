@@ -76,6 +76,11 @@ parser.add_argument(
     action="store_true",
     help="Whether to add structural design variables as OpenMDAO design variables",
 )
+parser.add_argument(
+    "--useFuelMassDVs",
+    action="store_true",
+    help="Enable the design variables controlling the fuel mass in each flight condition",
+)
 parser.add_argument("--useComposite", action="store_true", help="Use composite material", default=True)
 parser.add_argument(
     "--useStiffPitchDVs",

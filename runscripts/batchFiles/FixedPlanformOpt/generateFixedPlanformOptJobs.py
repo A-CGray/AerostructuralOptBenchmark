@@ -43,7 +43,7 @@ for linType in ["Linear", "Nonlinear"]:
         runCommand = f"""python aeroStructRun-MultipointParallel.py \\
 --task opt --optType fuelburn \\
 --initPenalty 0.1 --violLimit 0.05 --hessianUpdate 60 \\
---timeLimit {(runTime*3600 - (15*60))} \\
+--timeLimit {(runTime * 3600 - (15 * 60))} \\
 --addStructDVs \\
 --addGeoDVs --shape --twist \\
 --flightPointSet 3pt \\

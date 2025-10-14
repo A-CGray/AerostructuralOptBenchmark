@@ -20,8 +20,8 @@ import sys
 import numpy as np
 from mpi4py import MPI
 import openmdao.api as om
-from mphys import Multipoint
-from mphys.scenario_structural import ScenarioStructural
+from mphys import Multipoint, MPhysVariables
+from mphys.scenarios import ScenarioStructural
 from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
 from tacs import TACS
@@ -43,13 +43,17 @@ from utils import (
     saveRunCommand,
     getStructMeshPath,
     getFFDPath,
+    getStructDVs,
+    setupFuelMassGroup,
+    mergeStructDVs,
+    getTriangulatedSurface,
 )
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AircraftSpecs"))
-from STWFlightPoints import flightPointSets  # noqa: E402
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../geometry"))
-from wingGeometry import wingGeometry  # noqa: E402
+from geometry.wingGeometry import wingGeometry  # noqa: E402
+
 
 verticalIndex = wingGeometry["verticalIndex"]
 chordIndex = wingGeometry["chordIndex"]
@@ -80,13 +84,16 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-if args.task == "opt" and not args.addStructDVs and not args.addGeoDVs:
-    raise ValueError("You must specify at least one of --addStructDVs or --addGeoDVs to run an optimisation")
+if args.task == "opt" and not args.addStructDVs and not args.addGeoDVs and not args.useFuelMassDVs:
+    raise ValueError(
+        "You must specify at least one of --addStructDVs, --addGeoDVs, or --useFuelMassDVs to run an optimisation"
+    )
 
 if args.task == "derivCheck":
     args.addGeoDVs = True
     args.twist = True
     args.addStructDVs = True
+    args.useFuelMassDVs = True
 
 
 # --- Figure out where to put the results ---
@@ -161,10 +168,11 @@ class Top(Multipoint):
                 continuationOptions=continuationOptions,
             )
 
-            # Apply a uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical
-            # load equivalent to 2.5g
-            lSkinCompIDs = fea_assembler.selectCompIDs("L_SKIN")
-            problem.addPressureToComponents(lSkinCompIDs, -flightPoint.loadFactor * 30e3 / 2.5)
+            if "taxi_bump" not in scenario_name.lower():
+                # Apply a uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical
+                # load equivalent to 2.5g
+                lSkinCompIDs = fea_assembler.selectCompIDs("L_SKIN")
+                problem.addPressureToComponents(lSkinCompIDs, -flightPoint.loadFactor * 30e3 / 2.5)
 
         def element_callback(dvNum, compID, compDescript, elemDescripts, specialDVs, **kwargs):
             return setupTACS.element_callback(
@@ -191,17 +199,16 @@ class Top(Multipoint):
         for ii, flightPoint in enumerate(flightPoints):
             scenarioName = flightPoint.name
 
-            struct_builder = TacsBuilder(
+            structBuilder = TacsBuilder(
                 mesh_file=structMeshFile,
                 assembler_setup=setup_assembler,
                 element_callback=element_callback,
                 constraint_setup=constraint_callback,
                 problem_setup=setup_tacs_problem,
-                coupled=False,
                 write_solution=not args.noFiles,
             )
-            struct_builder.initialize(self.comm)
-            self.FEAAssembler = struct_builder.get_fea_assembler()
+            structBuilder.initialize(self.comm)
+            self.FEAAssembler = structBuilder.get_fea_assembler()
             structDVMap = setupTACS.buildStructDVDictMap(self.FEAAssembler, args)
             if rank == 0:
                 with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
@@ -213,17 +220,23 @@ class Top(Multipoint):
             if ii == 0:
                 # ivc to keep the top level DVs
                 dvSys = self.add_subsystem("dvs", om.IndepVarComp(), promotes=["*"])
-                # add the structural DVs
-                init_dvs = struct_builder.get_initial_dvs()
-                dvSys.add_output("dv_struct", init_dvs)
+
+                initStructDVs, fuelMassDVInds, sizingDVInds = getStructDVs(structBuilder)
+                self.numRibBays = len(fuelMassDVInds)
+
+                dvSys.add_output("dv_struct", val=initStructDVs[sizingDVInds])
+
                 if args.addStructDVs:
-                    lb, ub = struct_builder.get_dv_bounds()
-                    structDVScaling = np.array(struct_builder.fea_assembler.scaleList)
+                    lb, ub = structBuilder.get_dv_bounds()
+                    structDVScaling = np.array(structBuilder.fea_assembler.scaleList)
                     self.add_design_var(
-                        "dv_struct", lower=lb, upper=ub, scaler=structDVScaling * args.structScalingFactor
+                        "dv_struct",
+                        lower=lb[sizingDVInds],
+                        upper=ub[sizingDVInds],
+                        scaler=structDVScaling[sizingDVInds] * args.structScalingFactor,
                     )
 
-                self.add_subsystem("mesh", struct_builder.get_mesh_coordinate_subsystem())
+                self.add_subsystem("mesh", structBuilder.get_mesh_coordinate_subsystem())
 
                 # Create the geometry component, we dont need a builder because we do it here.
                 geometrySys = self.add_subsystem(
@@ -231,17 +244,38 @@ class Top(Multipoint):
                     OM_DVGEOCOMP(file=ffdFile, type="ffd", options={"isComplex": isComplex}),
                 )
                 # Tell the geometry component that there will be a set of coordinates for the structural discipline
-                geometrySys.nom_add_discipline_coords("struct")
+                geometrySys.nom_add_discipline_coords(MPhysVariables.Structures.Geometry)
                 # Connect the original structural mesh coordinates as an input to the geometry component
-                self.connect("mesh.x_struct0", "geometry.x_struct_in")
+                self.connect(
+                    f"mesh.{MPhysVariables.Structures.Mesh.COORDINATES}",
+                    f"geometry.{MPhysVariables.Structures.Geometry.COORDINATES_INPUT}",
+                )
+
+                # --- Fuel mass computation ---
+                fuelDVName = "fuelMass"
+                dvSys.add_output(fuelDVName, val=10500.0, shape=1)  # Total fuel mass, placeholder for now
+                if args.useFuelMassDVs:
+                    self.add_design_var(
+                        fuelDVName,
+                        lower=0.0,
+                        scaler=1e-3,
+                    )
+
+                setupFuelMassGroup(self, fuelDVName, numRibBays=self.numRibBays)
+
+                # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
+                mergeStructDVs(self, fuelMassDVInds, sizingDVInds)
 
             # this is the method that needs to be called for every point in this mp_group
-            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=struct_builder))
-            self.mphys_connect_scenario_coordinate_source(
-                "geometry", scenarioName, "struct"
-            )  # This is equivalent to `self.connect("geometry.x_struct0", f"{scenarioName}.x_struct0")`
+            self.mphys_add_scenario(scenarioName, ScenarioStructural(struct_builder=structBuilder))
 
-            self.connect("dv_struct", f"{scenarioName}.dv_struct")
+            # Connect the paramterized mesh coordinates to the scenario
+            self.connect(
+                f"geometry.{MPhysVariables.Structures.Geometry.COORDINATES_OUTPUT}",
+                f"{scenarioName}.{MPhysVariables.Structures.COORDINATES}",
+            )
+
+            self.connect("dv_struct_full", f"{scenarioName}.dv_struct")
 
         # For the compliance minimisation problem, we need to add a component to sum the compliance from each point
         if args.optType.lower() == "mincomp":
@@ -252,6 +286,8 @@ class Top(Multipoint):
                 self.connect(f"{fp.name}.compliance", f"totalCompliance.compliance_{ii}")
 
     def configure(self):
+        # Set the constrain surface required for DVConstraints to compute the rib bay volumes
+        self.geometry.nom_setConstraintSurface(getTriangulatedSurface())
         # Setup the geometric DVs
         setupDVGeo(
             args,
@@ -261,7 +297,20 @@ class Top(Multipoint):
             dvScaleFactor=args.geoScalingFactor,
             geoCompName="geometry",
             addGeoDVs=args.addGeoDVs,
+            addGeoConstraints=False,
+            computeRibBayVolumes=True,
+            computeToC=False,
         )
+
+        # Connect rib bay volumes to the fuel distribution group
+        for ii in range(self.numRibBays):
+            self.connect(f"geometry.RibBay-Volume_{ii}", f"RibBay-Volume_{ii}")
+
+        DVCon = self.geometry.nom_getDVCon()
+        if self.comm.rank == 0:
+            DVCon.writeTecplot(os.path.join(outputDir, "DVConstraints.dat"))
+            DVCon.writeSurfaceTecplot(os.path.join(outputDir, "DVConstraintsSurface.dat"))
+            DVCon.writeSurfaceSTL(os.path.join(outputDir, "DVConstraintsSurface.stl"))
 
         # Add TACS constraints
         firstScenario = self.__getattribute__(flightPoints[0].name)
@@ -285,7 +334,13 @@ elif args.optType.lower() == "minmass":
 else:
     raise ValueError(f"Unknown optType: {args.optType}")
 
-prob.setup(force_alloc_complex=isComplex)
+if args.useFuelMassDVs:
+    model.add_constraint("fuelTankUsage", upper=1.0, scaler=1.0)
+
+prob.setup(force_alloc_complex=isComplex, mode="rev")
+# This `final_setup` call is needed to force OpenMDAO to figure out the sizes of things, otherwise a call to
+# `get_desig_vars` inside `setValsFromFiles` fails
+prob.final_setup()
 
 # ==============================================================================
 # Potentially set initial DVs from a previous run
@@ -305,8 +360,9 @@ if args.task in ["analysis", "derivCheck"]:
     prob.model.list_outputs()
     if args.task == "derivCheck":
         np.set_printoptions(precision=16, linewidth=200)
-        geoDVNames = model.geometry.DVGeo.getVarNames()
-        wrt = geoDVNames  # + ["dv_struct"]
+        DVGeo = model.geometry.nom_getDVGeo()
+        geoDVNames = DVGeo.getVarNames()
+        wrt = geoDVNames + ["fuelMass"]
         of = []
         for fp in flightPoints:
             of += [f"{fp.name}.{func}" for func in ["mass", "compliance"]]
@@ -326,8 +382,10 @@ if args.task in ["analysis", "derivCheck"]:
                     out_stream=textFile,
                     compact_print=True,
                     rel_err_tol=1e-8 if isComplex else 1e-2,
-                    abs_err_tol=1e6,
+                    abs_err_tol=1e-6,
                 )
+
+                # Now do directional derivative for struct dvs
                 for variable in wrt:
                     prob.set_val(variable, origDVs[variable])
                 prob.run_model()
@@ -341,7 +399,7 @@ if args.task in ["analysis", "derivCheck"]:
                         out_stream=textFile,
                         compact_print=True,
                         rel_err_tol=1e-8 if isComplex else 1e-2,
-                        abs_err_tol=1e6,
+                        abs_err_tol=1e-6,
                         directional=True,
                     )
                 )
@@ -436,7 +494,6 @@ rearUpperCoord = FEAAssembler.meshLoader.getBDFNodes(rearUpperNodeGlobalID, nast
 
 # Now retrieve the displacements at these nodes and compute the overall tip displacement and rotation
 for fpName in flightPointsDict:
-
     disp = prob.model.get_val(f"{fpName}.solver.u_struct", get_remote=False)
     frontUpperDisp = None
     rearUpperDisp = None

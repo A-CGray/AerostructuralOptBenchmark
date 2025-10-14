@@ -17,7 +17,7 @@ for level, meshSize in zip(levels, meshSizes):
     numNodes = max(1, idealNumProcs // nas.ncpus_per_node)
     numNodes = min(10, numNodes)
 
-    nas.mpiexec = f"mpiexec_mpt -n {numNodes*nas.ncpus_per_node}"
+    nas.mpiexec = f"mpiexec_mpt -n {numNodes * nas.ncpus_per_node}"
     nas.requested_number_of_nodes = numNodes
 
     jobName = f"ADflowPolar-L{level}"

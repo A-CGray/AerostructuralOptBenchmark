@@ -15,17 +15,17 @@ import reverse_argparse
 from pyoptsparse import History
 from scipy.sparse import coo_matrix
 import numpy as np
+from stl import mesh
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
 THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(THIS_FILE_DIR, "../AircraftSpecs"))
-from STWFlightPoints import flightPointSets  # noqa: E402
-from STWSpecs import aircraftSpecs  # noqa: E402
-
-sys.path.append(os.path.join(THIS_FILE_DIR, "../geometry"))
-from wingGeometry import wingGeometry  # noqa: E402
+sys.path.append(os.path.join(THIS_FILE_DIR, ".."))
+from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
+from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
+from geometry.wingGeometry import wingGeometry  # noqa: E402
+from performanceCalc import FuelDistributionGroup  # noqa: E402
 
 
 def getGeometryData():
@@ -45,11 +45,17 @@ def getAeroMeshPath(level: int) -> str:
 
 
 def getStructMeshPath(level: int, order: int) -> str:
-    return os.path.join(THIS_FILE_DIR, f"../struct/wingbox-L{level}-Order{order}.bdf")
+    return os.path.join(THIS_FILE_DIR, f"../struct/wingbox-L{level}-Order{order}-wRBEs.bdf")
 
 
 def getFFDPath(level: str):
     return os.path.join(THIS_FILE_DIR, f"../geometry/wing-ffd-advanced-{level}.xyz")
+
+
+def getTriangulatedSurface():
+    stlFile = os.path.join(THIS_FILE_DIR, "../geometry/DVConstraintsSurface.stl")
+    stlMesh = mesh.Mesh.from_file(stlFile)
+    return [stlMesh.v0, stlMesh.v1 - stlMesh.v0, stlMesh.v2 - stlMesh.v0]
 
 
 def saveRunCommand(parser, args, outputDir):
@@ -190,16 +196,22 @@ def getOutputDir():
 
 
 # ==============================================================================
-# Function for translating OpenMDAO optimisation problem to a pyOptSparse problem
+# Functions for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
-def get_prom_name(model, abs_name):
-    abs2prom = model._var_abs2prom
-    if abs_name in abs2prom["input"]:
-        return abs2prom["input"][abs_name]
-    elif abs_name in abs2prom["output"]:
-        return abs2prom["output"][abs_name]
+def get_prom_name(system, abs_name):
+    name = abs_name
+
+    if hasattr(system, "_resolver"):
+        abs2prom = system._resolver._abs2prom
     else:
-        return abs_name
+        abs2prom = system._var_abs2prom
+
+    if abs_name in abs2prom["input"]:
+        name = abs2prom["input"][abs_name]
+    elif abs_name in abs2prom["output"]:
+        name = abs2prom["output"][abs_name]
+
+    return name if isinstance(name, str) else name[0]
 
 
 def convertSensDict(openmdaoSensDict):
@@ -303,8 +315,8 @@ def getTipDisplacement(prob, fpName):
     rearUpperNodeGlobalID = list(nodes["U_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
 
     # Now do the same for the lower skin
-    frontLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
-    rearLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
+    # frontLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.00"]))[0]
+    # rearLowerNodeGlobalID = list(nodes["L_SKIN"].intersection(nodes["RIB.22"]).intersection(nodes["SPAR.01"]))[0]
 
     frontUpperNodeLocalID = FEAAssembler.meshLoader.getLocalNodeIDsFromGlobal(
         frontUpperNodeGlobalID, nastranOrdering=False
@@ -347,3 +359,128 @@ def getTipDisplacement(prob, fpName):
     tipTwist = np.rad2deg(np.arctan2((z2 + dz2) - (z1 + dz1), (x2 + dx2) - (x1 + dx1)) - np.arctan2(z2 - z1, x2 - x1))
 
     return tipZDisp, tipTwist
+
+
+class ArrayMergeComp(om.ExplicitComponent):
+    """
+    Component to merge a list of arrays into a single array, potentially with non-contiguous indices
+
+    Given arrays, a, b, c, this compoent basically computes:
+
+    d = np.zeros(len(a) + len(b) + len(c))
+    d[aInds] += a
+    d[bInds] += b
+    d[cInds] += c
+
+    Parameters
+    ----------
+    arraySizes : list
+        List of sizes of each array to be merged
+    """
+
+    def initialize(self):
+        self.options.declare("arraySizes", types=list, desc="List of sizes of each array to be merged", default=None)
+        self.options.declare(
+            "arrayInds", types=list, desc="List of index arrays for each array to be merged", default=None
+        )
+        self.options.declare("outSize", types=int, desc="Size of the output array", default=None)
+
+    def setup(self):
+        opt = self.options
+        if opt["arraySizes"] is not None:
+            self.arraySizes = opt["arraySizes"]
+            self.numArrays = len(opt["arraySizes"])
+            self.inds = []
+            start = 0
+            for size in opt["arraySizes"]:
+                self.inds.append(np.arange(start, start + size))
+                start += size
+        elif opt["arrayInds"] is not None:
+            self.numArrays = len(opt["arrayInds"])
+            self.inds = opt["arrayInds"]
+            self.arraySizes = [len(inds) for inds in self.inds]
+        else:
+            raise ValueError("Either arraySizes or arrayInds must be provided")
+        if opt["outSize"] is not None:
+            self.outSize = opt["outSize"]
+        else:
+            self.outSize = max([max(inds) for inds in self.inds]) + 1
+
+        for i in range(self.numArrays):
+            self.add_input(f"in{i}", shape=len(self.inds[i]))
+        self.add_output("out", shape=self.outSize)
+
+        for i in range(self.numArrays):
+            rows = self.inds[i]
+            cols = np.arange(len(self.inds[i]))
+            self.declare_partials("out", f"in{i}", rows=rows, cols=cols, val=1.0)
+
+    def compute(self, inputs, outputs):
+        outputs["out"] = 0.0
+        for i in range(self.numArrays):
+            outputs["out"][self.inds[i]] += inputs[f"in{i}"]
+
+
+class AverageComp(om.ExplicitComponent):
+    """
+    Component to compute the average of an input array
+
+    Parameters
+    ----------
+    size : int
+        Size of the input array
+    """
+
+    def setup(self):
+        self.add_input("in", shape_by_conn=True)
+        self.add_output("out", shape=1)
+
+        self.declare_partials("out", "in")
+
+    def compute(self, inputs, outputs):
+        outputs["out"] = np.mean(inputs["in"])
+
+    def compute_partials(self, inputs, J):
+        if self.size is None:
+            self.size = len(inputs["in"])
+        J["out", "in"][:] = 1.0 / self.size
+
+
+def getStructDVs(structBuilder):
+    initStructDVs = structBuilder.get_initial_dvs()
+
+    # Get the indices of the point mass DVs corresponding to fuel mass in each rib bay
+    globalDVs = structBuilder.get_fea_assembler().getGlobalDVs()
+    fuelMassDVInds = []
+    for dvName in globalDVs:
+        if "FuelMass" in dvName:
+            dvNum = globalDVs[dvName]["num"]
+            fuelMassDVInds.append(dvNum)
+
+    # We want to split the TACS DV array into the fuel mass values and the rest of the structural DVs
+    sizingDVInds = list(set(range(len(initStructDVs))) - set(fuelMassDVInds))
+    return initStructDVs, fuelMassDVInds, sizingDVInds
+
+
+def setupFuelMassGroup(model, fuelDVName, numRibBays):
+    return model.add_subsystem(
+        "fuelMassDistribution",
+        FuelDistributionGroup(
+            aircraftSpecs=aircraftSpecs,
+            numRibBays=numRibBays,
+            volumeVarName="RibBay-Volume",
+            maxSmoothingRelError=1e-3,
+        ),
+        promotes_inputs=["*", ("fuelMass", fuelDVName)],
+        promotes_outputs=["*"],
+    )
+
+
+def mergeStructDVs(model, fuelMassDVInds, sizingDVInds):
+    mergeComp = ArrayMergeComp(arrayInds=[fuelMassDVInds, sizingDVInds])
+    return model.add_subsystem(
+        "struct_dv_merger",
+        mergeComp,
+        promotes_inputs=[("in0", "bayFuelMasses"), ("in1", "dv_struct")],
+        promotes_outputs=[("out", "dv_struct_full")],
+    )
