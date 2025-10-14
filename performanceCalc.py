@@ -272,7 +272,14 @@ class LiftConstraintComp(om.ExplicitComponent):
 
 
 # --- Misc ---
-def computeFuelTankUsage(fuelBurn, wingboxVolume, reserveFuelMass, fuelDensity, wingboxVolumeFraction, auxTankVolume):
+def computeFuelTankUsage(
+    fuelBurn,
+    wingboxVolume,
+    reserveFuelMass,
+    fuelDensity,
+    wingboxVolumeFraction,
+    auxTankVolume,
+):
     """Compute the percentage of available fuel tank volume used during a mission
 
     Parameters
@@ -304,7 +311,10 @@ class FuelTankUsageComp(om.ExplicitComponent):
     def initialize(self):
         self.options.declare("reserveFuelMass", desc="Mass of reserve fuel required at end of mission")
         self.options.declare("fuelDensity", desc="Density of fuel")
-        self.options.declare("wingboxVolumeFraction", desc="Fraction of the wingbox which assumed to be fuel tank")
+        self.options.declare(
+            "wingboxVolumeFraction",
+            desc="Fraction of the wingbox which assumed to be fuel tank",
+        )
         self.options.declare("auxTankVolume", desc="Volume of auxiliary fuel tanks not in wingbox")
 
     def setup(self):
@@ -407,7 +417,10 @@ class FuelBurnGroup(om.Group):
             dynPressure=self.flightPoint.q,
         )
         self.add_subsystem(
-            "dragCorrection", addedDragComp, promotes_inputs=[("drag", "cruiseDrag")], promotes_outputs=["*"]
+            "dragCorrection",
+            addedDragComp,
+            promotes_inputs=[("drag", "cruiseDrag")],
+            promotes_outputs=["*"],
         )
 
         # --- Breguet range calculations ---
@@ -444,7 +457,9 @@ class FuelBurnGroup(om.Group):
 
         # Finally compute the fuelburn as the difference between the takeoff mass and the landing gross mass
         totalFuelBurnComp = om.AddSubtractComp(
-            output_name="totalFuelBurn", input_names=["takeoffMass", "landingGrossMass"], scaling_factors=[1.0, -1.0]
+            output_name="totalFuelBurn",
+            input_names=["takeoffMass", "landingGrossMass"],
+            scaling_factors=[1.0, -1.0],
         )
         self.add_subsystem("totalFuelBurnComp", totalFuelBurnComp, promotes=["*"])
 
@@ -457,7 +472,9 @@ class FuelDistributionComp(om.JaxExplicitComponent):
     def initialize(self):
         self.options.declare("fuelDensity", types=float, desc="Density of fuel")
         self.options.declare(
-            "wingboxVolumeFraction", types=float, desc="Fraction of each rib bay assumed to be fuel tank"
+            "wingboxVolumeFraction",
+            types=float,
+            desc="Fraction of each rib bay assumed to be fuel tank",
         )
         self.options.declare("numRibBays", types=int)
         self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
@@ -502,7 +519,10 @@ class FuelDistributionComp(om.JaxExplicitComponent):
         bayFuelMasses = bayFullFuelMasses + remainingFuelMass
 
         bayFuelMasses = 0.5 * self.smoothClip(
-            bayFuelMasses, 0.0, bayFullFuelMasses, maxRelError=self.options["maxSmoothingRelError"]
+            bayFuelMasses,
+            0.0,
+            bayFullFuelMasses,
+            maxRelError=self.options["maxSmoothingRelError"],
         )
 
         return bayFuelMasses, wingboxVolume
@@ -572,7 +592,11 @@ class FuelDistributionGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
         self.options.declare("numRibBays", types=int)
-        self.options.declare("volumeVarName", types=str, desc="Name of the variable containing the rib bay volumes")
+        self.options.declare(
+            "volumeVarName",
+            types=str,
+            desc="Name of the variable containing the rib bay volumes",
+        )
         self.options.declare("maxSmoothingRelError", types=float, default=1e-4)
 
     def setup(self):
@@ -628,7 +652,10 @@ class LiftConstraintGroup(om.Group):
                 self.add_subsystem(
                     f"{fp.name}LiftConstraint",
                     liftConComp,
-                    promotes_inputs=[("mass", inputMassVar), ("lift", f"{fp.name}Lift")],
+                    promotes_inputs=[
+                        ("mass", inputMassVar),
+                        ("lift", f"{fp.name}Lift"),
+                    ],
                     promotes_outputs=[("liftDiff", f"{fp.name}LiftDiff")],
                 )
 

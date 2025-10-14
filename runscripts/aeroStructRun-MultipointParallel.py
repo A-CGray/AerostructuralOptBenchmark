@@ -115,7 +115,16 @@ parser.add_argument(
     "--task",
     type=str,
     default="check",
-    choices=["writeJigShape", "check", "analysis", "derivCheck", "opt", "trim", "polar", "rawPolar"],
+    choices=[
+        "writeJigShape",
+        "check",
+        "analysis",
+        "derivCheck",
+        "opt",
+        "trim",
+        "polar",
+        "rawPolar",
+    ],
     help="Task to run",
 )
 parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
@@ -134,15 +143,25 @@ parser.add_argument("--numAlpha", type=int, default=5, help="Number of points to
 
 # --- Coupled solver options ---
 parser.add_argument(
-    "--noAitken", action="store_true", help="Don't use Aitken acceleration in the coupled aerostructural solver"
+    "--noAitken",
+    action="store_true",
+    help="Don't use Aitken acceleration in the coupled aerostructural solver",
 )
 parser.add_argument(
-    "--aitkenInitFactor", type=float, default=0.5, help="Initial relaxation factor to use in NLBGS solver"
+    "--aitkenInitFactor",
+    type=float,
+    default=0.5,
+    help="Initial relaxation factor to use in NLBGS solver",
 )
 
 # --- Optimisation options ---
 parser.add_argument("--rangeScale", type=float, default=1.0, help="Factor to scale the mission range by")
-parser.add_argument("--maxWingLoading", type=float, default=600.0, help="Maximum allowable wing loading (kg/m^2)")
+parser.add_argument(
+    "--maxWingLoading",
+    type=float,
+    default=600.0,
+    help="Maximum allowable wing loading (kg/m^2)",
+)
 parser.add_argument(
     "--optType",
     type=str,
@@ -159,12 +178,27 @@ parser.add_argument(
 
 # --- Aero options ---
 parser.add_argument("--aeroLevel", type=int, default=3, choices=[1, 2, 3])
-parser.add_argument("--aeroTol", type=float, default=None, help="Relative tolerance for each NLBGS aero solve")
-parser.add_argument("--aeroMaxIter", type=int, default=None, help="Iteration limit for each NLBGS aero solve")
+parser.add_argument(
+    "--aeroTol",
+    type=float,
+    default=None,
+    help="Relative tolerance for each NLBGS aero solve",
+)
+parser.add_argument(
+    "--aeroMaxIter",
+    type=int,
+    default=None,
+    help="Iteration limit for each NLBGS aero solve",
+)
 parser.add_argument("--sepSensorType", type=str, default="new", choices=["old", "new"])
 
 # --- LDTransfer options ---
-parser.add_argument("--nMeld", type=int, default=None, help="Override for number of nodes to use in MELD")
+parser.add_argument(
+    "--nMeld",
+    type=int,
+    default=None,
+    help="Override for number of nodes to use in MELD",
+)
 parser.add_argument(
     "--transferType",
     type=str,
@@ -384,7 +418,7 @@ if args.nonlinear:
         "RelTol": 1e-7,
         "UsePredictor": True,
         "NumPredictorStates": 4,
-        "maxIter": 10,
+        "maxIter": 20,
     }
 
 
@@ -480,7 +514,10 @@ aeroBuilder = ADflowBuilder(
 # --- First define which nodes in the aero and struct meshes will be involved in the transfer ---
 if args.transferTo == "all":
     ldTransferBodies = None
-elif args.transferTo in ["skin", "skin+ribends"]:  # The rib-spar intersection nodes will be added later
+elif args.transferTo in [
+    "skin",
+    "skin+ribends",
+]:  # The rib-spar intersection nodes will be added later
     ldTransferBodies = [{"aero": ["wall"], "struct": ["SKIN"]}]
 elif args.transferTo == "skin+spar":
     ldTransferBodies = [{"aero": ["wall"], "struct": ["SKIN", "SPAR"]}]
@@ -579,7 +616,8 @@ class AnalysisPoint(Multipoint):
 
             # Connect the original mesh coordinates as an input to the geometry component
             self.connect(
-                f"mesh_{dName}.{discipline.Mesh.COORDINATES}", f"geometry.{discipline.Geometry.COORDINATES_INPUT}"
+                f"mesh_{dName}.{discipline.Mesh.COORDINATES}",
+                f"geometry.{discipline.Geometry.COORDINATES_INPUT}",
             )
 
         if isAeroStruct:
@@ -691,7 +729,12 @@ class AnalysisPoint(Multipoint):
                     aircraftSpecs=aircraftSpecs,
                 )
                 self.add_subsystem(
-                    "airframeMass", massComp, promotes=["landingGrossMass", ("wingboxMass", f"{self.fpName}.mass")]
+                    "airframeMass",
+                    massComp,
+                    promotes=[
+                        "landingGrossMass",
+                        ("wingboxMass", f"{self.fpName}.mass"),
+                    ],
                 )
             if isCruisePoint:
                 fuelBurnGroup = performanceCalc.FuelBurnGroup(
@@ -702,17 +745,28 @@ class AnalysisPoint(Multipoint):
                     "fuelBurn",
                     fuelBurnGroup,
                     promotes_inputs=["landingGrossMass"],
-                    promotes_outputs=["totalFuelBurn", "cruiseStartMass", "takeoffMass"],
+                    promotes_outputs=[
+                        "totalFuelBurn",
+                        "cruiseStartMass",
+                        "takeoffMass",
+                    ],
                 )
                 for force in [
                     "lift",
                     "drag",
                 ]:
-                    self.connect(f"{self.fpName}.aero_post.{force.lower()}", f"fuelBurn.cruise{force.capitalize()}")
+                    self.connect(
+                        f"{self.fpName}.aero_post.{force.lower()}",
+                        f"fuelBurn.cruise{force.capitalize()}",
+                    )
 
                 # --- Compute the mid-cruise mass ---
                 cruiseMass = performanceCalc.MidSegmentMassComp()
-                self.add_subsystem("midCruiseMass", cruiseMass, promotes_outputs=[("midSegmentMass", "midCruiseMass")])
+                self.add_subsystem(
+                    "midCruiseMass",
+                    cruiseMass,
+                    promotes_outputs=[("midSegmentMass", "midCruiseMass")],
+                )
                 self.connect("landingGrossMass", "midCruiseMass.finalMass")
                 self.connect("cruiseStartMass", "midCruiseMass.initialMass")
 
@@ -770,7 +824,10 @@ class AnalysisPoint(Multipoint):
             alphaDVName = f"{self.fpName}_AOA"
             dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
             self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
-            self.connect(alphaDVName, [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"])
+            self.connect(
+                alphaDVName,
+                [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
+            )
 
         # Setup the geometric DVs and constraints, we only need to compute the geometric constraints (LE radius,
         # thickness, area etc) on one proc set
@@ -803,7 +860,9 @@ class AnalysisPoint(Multipoint):
             wimpressComp = self.PlanformValues
             wimpressCoordName = "x_wimpress"
             geometryComp.nom_addPointSet(
-                wimpressComp.wimpressCalc.getCoords(packed=True), ptName=wimpressCoordName, distributed=False
+                wimpressComp.wimpressCalc.getCoords(packed=True),
+                ptName=wimpressCoordName,
+                distributed=False,
             )
             self.connect(f"geometry.{wimpressCoordName}", "PlanformValues.x_wimpress")
 
@@ -831,7 +890,10 @@ class AnalysisPoint(Multipoint):
                 err_on_non_converge=True,
             )
             scenario.coupling.linear_solver = om.PETScKrylov(
-                atol=1e-4 * args.tolFactor, rtol=1e-8 * args.tolFactor, maxiter=50, iprint=2
+                atol=1e-4 * args.tolFactor,
+                rtol=1e-8 * args.tolFactor,
+                maxiter=50,
+                iprint=2,
             )
             scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
 
@@ -881,11 +943,17 @@ if args.task in ["trim", "opt", "check"]:
     liftConScale = 1e-6 if args.task == "trim" else 1e-8
     if isAeroStruct:
         performanceProb.model.add_constraint(
-            f"{localFlightPoint.name}LiftDiff", equals=0.0, scaler=liftConScale, cache_linear_solution=True
+            f"{localFlightPoint.name}LiftDiff",
+            equals=0.0,
+            scaler=liftConScale,
+            cache_linear_solution=True,
         )
     if args.useFuelMassDVs:
         performanceProb.model.add_constraint(
-            f"{localFlightPoint.name}FuelMassDiff", equals=0.0, scaler=liftConScale, cache_linear_solution=True
+            f"{localFlightPoint.name}FuelMassDiff",
+            equals=0.0,
+            scaler=liftConScale,
+            cache_linear_solution=True,
         )
 
     if args.task in ["opt", "check"]:
@@ -912,7 +980,9 @@ if args.task in ["trim", "opt", "check"]:
     # --- Buffet constraints ---
     if "buffet" in localFlightPoint.name.lower():
         flightPointProb.model.add_constraint(
-            f"{localFlightPoint.name}BuffetCon", upper=0.0, scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"])
+            f"{localFlightPoint.name}BuffetCon",
+            upper=0.0,
+            scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"]),
         )
 
     # ==============================================================================
@@ -963,7 +1033,14 @@ dvMap = {}
 for inpName in performanceProbInputs:
     # These have the same name in both models
     if (
-        inpName in ["wingboxVolume", "takeoffMass", "midCruiseMass", "cruiseStartMass", "landingGrossMass"]
+        inpName
+        in [
+            "wingboxVolume",
+            "takeoffMass",
+            "midCruiseMass",
+            "cruiseStartMass",
+            "landingGrossMass",
+        ]
         or "fuelMass" in inpName
     ):
         dvMap[inpName] = inpName
@@ -986,8 +1063,16 @@ if ptComm.rank == 0:
 if len(args.initDVs) != 0:
     setValsFromFiles(args.initDVs, flightPointProb)
 
-om.n2(flightPointProb, show_browser=False, outfile=os.path.join(localOutputDir, "AeroStruct-N2-Pre-Run.html"))
-om.n2(performanceProb, show_browser=False, outfile=os.path.join(outputDir, "Performance-N2-Pre-Run.html"))
+om.n2(
+    flightPointProb,
+    show_browser=False,
+    outfile=os.path.join(localOutputDir, "AeroStruct-N2-Pre-Run.html"),
+)
+om.n2(
+    performanceProb,
+    show_browser=False,
+    outfile=os.path.join(outputDir, "Performance-N2-Pre-Run.html"),
+)
 
 # ==============================================================================
 # Get design variables, constraints and objectives
@@ -1060,9 +1145,10 @@ for _, fpFuncName in dvMap.items():
     if fpFuncName in flightPointProbOutputs and fpFuncName not in gradFuncs:
         gradFuncs.append(fpFuncName)
 
-# If we're doing a trim solve and not an optimization then we can remove the ksFailure constraints from the gradFuncs to avoid computing their adjoints
+# If we're doing a trim solve and not an optimization then we can remove the ksFailure and buffet constraints from the gradFuncs to avoid computing their adjoints
 if args.task == "trim":
     gradFuncs[:] = [x for x in gradFuncs if "ksfailure" not in x.lower()]
+    gradFuncs[:] = [x for x in gradFuncs if "sepsensor" not in x.lower()]
 
 # broadcast gradFuncs to all procs in this set
 gradFuncs = ptComm.bcast(gradFuncs, root=0)
@@ -1236,7 +1322,10 @@ def objCon(funcs, printOK, passThroughFuncs):
         performanceProb.set_val(performanceVarName, funcs[funcName])
     performanceProb.run_model()
 
-    outputs = globalComm.bcast(performanceProb.model.list_outputs(return_format="dict", print_arrays=False), root=0)
+    outputs = globalComm.bcast(
+        performanceProb.model.list_outputs(return_format="dict", print_arrays=False),
+        root=0,
+    )
     for output in outputs.items():
         funcs[output[1]["prom_name"]] = output[1]["val"]
 
@@ -1272,7 +1361,13 @@ MP.addProcSetObjFunc("all", procSetObj)
 # I set writeSolution to true on the sensitivity function so that we only write solution files on major iterations
 # (this assumes you're using SNOPT's derivative-free line search)
 def procSetSens(x=None, funcs=None):
-    return computeSens(x, funcs, gradFuncs=gradFuncs, dispFuncs=dispFuncs, writeSolution=args.task == "opt")
+    return computeSens(
+        x,
+        funcs,
+        gradFuncs=gradFuncs,
+        dispFuncs=dispFuncs,
+        writeSolution=args.task == "opt",
+    )
 
 
 MP.addProcSetSensFunc("all", procSetSens)
@@ -1347,7 +1442,11 @@ if args.task != "check":
         print(f"Proc {globalRank}: Running again with postInitDVs", flush=True)
         setValsFromFiles(args.postInitDVs, flightPointProb)
         if args.task != "check":
-            funcs = runAnalysesRobustly(args.postInitDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
+            funcs = runAnalysesRobustly(
+                args.postInitDVs,
+                evalFuncs=dispFuncs,
+                writeSolution=args.task == "analysis",
+            )
             gatheredFuncs = globalComm.gather(funcs, root=0)
             funcs = {}
             if globalRank == 0:
@@ -1360,13 +1459,21 @@ if args.task != "check":
         np.set_printoptions(precision=16, linewidth=200)
         wrt = geoDesignVariables + aeroDesignVariables  # + ["dv_struct"]
         fpName = localFlightPoint.name
-        of = [f"{fpName}.aero_post.cl", f"{fpName}.aero_post.cd", f"{fpName}.compliance", f"{fpName}.l_skin_ksFailure"]
+        of = [
+            f"{fpName}.aero_post.cl",
+            f"{fpName}.aero_post.cd",
+            f"{fpName}.compliance",
+            f"{fpName}.l_skin_ksFailure",
+        ]
         of = [f for f in of if f in flightPointProbOutputs]
         origDVs = {}
         for variable in wrt:
             origDVs[variable] = flightPointProb.get_val(variable)
         with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.pkl"), "wb") as pickleFile:
-            with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"), "w") as textFile:
+            with open(
+                os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"),
+                "w",
+            ) as textFile:
                 if ptComm.rank == 0:
                     print(f"Testing derivatives of {of}, with respect to {wrt}")
                 totalsCheckData = flightPointProb.check_totals(
@@ -1416,7 +1523,9 @@ if args.task != "check":
                 x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
                 funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
                 writeOutputs(
-                    flightPointProb, outputDir=localOutputDir, fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs"
+                    flightPointProb,
+                    outputDir=localOutputDir,
+                    fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs",
                 )
     if args.task == "rawPolar":
         alphaMin = localFlightPoint.alpha - 1 if args.alphaMin is None else args.alphaMin
@@ -1426,7 +1535,11 @@ if args.task != "check":
             # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
             x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
             funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
-            writeOutputs(flightPointProb, outputDir=localOutputDir, fileName=f"Alpha-{alphaIndex}-Outputs")
+            writeOutputs(
+                flightPointProb,
+                outputDir=localOutputDir,
+                fileName=f"Alpha-{alphaIndex}-Outputs",
+            )
 
     if args.task in ["check", "opt", "trim"]:
         # ==============================================================================
@@ -1617,10 +1730,19 @@ if args.task != "check":
         elif args.task == "opt":
             if restartDict is not None:
                 sol = optimiser(
-                    optProb, MP.sens, storeHistory=optHistFilename, restartDict=restartDict, timeLimit=args.timeLimit
+                    optProb,
+                    MP.sens,
+                    storeHistory=optHistFilename,
+                    restartDict=restartDict,
+                    timeLimit=args.timeLimit,
                 )
             else:
-                sol = optimiser(optProb, MP.sens, storeHistory=optHistFilename, timeLimit=args.timeLimit)
+                sol = optimiser(
+                    optProb,
+                    MP.sens,
+                    storeHistory=optHistFilename,
+                    timeLimit=args.timeLimit,
+                )
             if args.optimiser == "snopt":
                 # SNOPT Returns it's working arrays in a restart dictionary that we should save for future hot starts
                 restartDict = sol[-1]
@@ -1631,7 +1753,9 @@ if args.task != "check":
 
     # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
     outputs = flightPointProb.model.list_outputs(
-        return_format="dict", print_arrays=False, excludes=["*adflow_vol_coords", "*adflow_states"]
+        return_format="dict",
+        print_arrays=False,
+        excludes=["*adflow_vol_coords", "*adflow_states"],
     )
     outputData = {}
     for output in outputs:
@@ -1665,5 +1789,13 @@ if args.task != "check":
         with open(outFileName, "wb") as f:
             dill.dump(outputData, f, protocol=-1)
 
-    om.n2(flightPointProb, show_browser=False, outfile=os.path.join(localOutputDir, "AeroStruct-N2-Post-Run.html"))
-    om.n2(performanceProb, show_browser=False, outfile=os.path.join(outputDir, "Performance-N2-Post-Run.html"))
+    om.n2(
+        flightPointProb,
+        show_browser=False,
+        outfile=os.path.join(localOutputDir, "AeroStruct-N2-Post-Run.html"),
+    )
+    om.n2(
+        performanceProb,
+        show_browser=False,
+        outfile=os.path.join(outputDir, "Performance-N2-Post-Run.html"),
+    )

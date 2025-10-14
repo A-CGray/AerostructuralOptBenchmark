@@ -56,11 +56,17 @@ resolution = 50
 # We need to convert the spar coordinates from 2d arrays to lists of 1d arrays so the pyLayoutGeo creates linear
 # segments between them
 layoutGeo.addComponent(
-    "spar", [LESparCoords[ii] for ii in range(LESparCoords.shape[0])], tag="le_spar", resolution=resolution
+    "spar",
+    [LESparCoords[ii] for ii in range(LESparCoords.shape[0])],
+    tag="le_spar",
+    resolution=resolution,
 )
 
 layoutGeo.addComponent(
-    "spar", [TESparCoords[ii] for ii in range(TESparCoords.shape[0])], tag="te_spar", resolution=resolution
+    "spar",
+    [TESparCoords[ii] for ii in range(TESparCoords.shape[0])],
+    tag="te_spar",
+    resolution=resolution,
 )
 
 # ==============================================================================

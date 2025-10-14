@@ -4,28 +4,33 @@ import numpy as np
 
 runTime = 72
 
-nas = PBS.nas(group_list="a1607", proc_type="cas", time=runTime, queue_name="long", profile_file="")
+nas = PBS.nas(
+    group_list="a1607",
+    proc_type="cas",
+    time=runTime,
+    queue_name="long",
+    profile_file="",
+)
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
-meshSizes = [int(9.7e5)]  # [int(1.8e5), int(9.7e5), int(7.8e6)]
-levels = [2]  # [3, 2, 1]
-cellsPerProc = int(12e3)
+meshSizes = [int(1.8e5)]  # [int(1.8e5), int(9.7e5), int(7.8e6)]
+levels = [3]  # [3, 2, 1]
+cellsPerProc = int(15e3)
 
 runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 for linType in ["Linear", "Nonlinear"]:
-    initDVs = os.path.join(
-        baseOutputDir, "PostOptPolars", f"PostOptTrim-FixedPlanformOpt-L2-{linType}-buffet", "Outputs.pkl"
-    )
-    for level, meshSize in zip(levels, meshSizes):
+    for level, meshSize in zip(levels, meshSizes, strict=True):
         idealNumProcs = 5 * meshSize // cellsPerProc
         numNodes = max(1, int(np.ceil(idealNumProcs / nas.ncpus_per_node)))
         numNodes = min(20, numNodes)
         totalProcs = numNodes * nas.ncpus_per_node
 
-        procs = np.array([61.0, 158.0, 70.0, 82.0, 70.0])
+        procs = np.array(
+            [1.0, 1.0, 1.0, 1.0, 1.0]
+        )  # np.array([0.14432157,  0.32101553, 0.11885102,0.24279618, 0.1730157]) # np.array([61.0, 158.0, 70.0, 82.0, 70.0])
         procs /= np.sum(procs)
         procs *= totalProcs
         procs = procs.astype(int)
@@ -52,11 +57,15 @@ for linType in ["Linear", "Nonlinear"]:
 --flightPointSet 5pt-buffet \\
 --procs {procString} \\
 --aeroLevel {level} --structLevel 1 {linOption} \\
---initDVs {initDVs} \\
 --output {outputDir}"""
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-        jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+        jobBody = [
+            f"mkdir -p {fullOutputDir}",
+            f"cp {jobName}.pbs {fullOutputDir}/",
+            f"cd {runDir}",
+            runCommand,
+        ]
         jobBody = [f"\n{line}" for line in jobBody]
 
         nas.write_job_file(

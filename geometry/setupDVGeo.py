@@ -72,7 +72,13 @@ def setupDVGeo(args, DVGeo):
             for i in range(sobEndInd, numRefAxPts):
                 twistArray.coef[i] = val[i - sobEndInd]
 
-        DVGeo.addGlobalDV(dvName="twist", value=[0] * numMovingSections, lower=-20.0, upper=20.0, func=twist)
+        DVGeo.addGlobalDV(
+            dvName="twist",
+            value=[0] * numMovingSections,
+            lower=-20.0,
+            upper=20.0,
+            func=twist,
+        )
 
     if args.taper:
 

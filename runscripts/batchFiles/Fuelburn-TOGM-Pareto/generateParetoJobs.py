@@ -4,7 +4,13 @@ import numpy as np
 
 runTime = 72
 
-nas = PBS.nas(group_list="a1607", proc_type="sky", time=runTime, queue_name="long", profile_file="")
+nas = PBS.nas(
+    group_list="a1607",
+    proc_type="sky",
+    time=runTime,
+    queue_name="long",
+    profile_file="",
+)
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -38,8 +44,8 @@ for weight in paretoWeights:
             nas.mpiexec = f"mpiexec_mpt -n {totalProcs}"
             nas.requested_number_of_nodes = numNodes
 
-            prevJobName = f"VariablePlanformOpt-L{level}-{linType}-ParetoWeight-{weight:.2f}-Part2"
-            jobName = prevJobName.replace("Part2", "Part3")
+            prevJobName = f"VariablePlanformOpt-L{level}-{linType}-ParetoWeight-{weight:.2f}-Part3"
+            jobName = prevJobName.replace("Part3", "Part4")
             outputDir = f"Fuelburn-TOGM-Pareto/{jobName}"
             fullOutputDir = os.path.join(baseOutputDir, outputDir)
             initDVs = os.path.join(baseOutputDir, "Fuelburn-TOGM-Pareto", prevJobName, "AeroStructOpt.hst")
@@ -59,7 +65,12 @@ for weight in paretoWeights:
 --output {outputDir}"""
             runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-            jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+            jobBody = [
+                f"mkdir -p {fullOutputDir}",
+                f"cp {jobName}.pbs {fullOutputDir}/",
+                f"cd {runDir}",
+                runCommand,
+            ]
             jobBody = [f"\n{line}" for line in jobBody]
 
             nas.write_job_file(

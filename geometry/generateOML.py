@@ -78,7 +78,7 @@ if args.ffdType == "basic":
     # Generate fitted FFD
     # ==============================================================================
     fileNames = ["wing-ffd-coarse.xyz", "wing-ffd-med.xyz", "wing-ffd-fine.xyz"]
-    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames):
+    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames, strict=True):
         createFittedWingFFD(
             wingSurface,
             surfFormat="point-vector",
@@ -97,7 +97,11 @@ elif args.ffdType == "advanced":
     # Fancier FFD
     # ==============================================================================
     # This is a more complex FFD that should allw me to stop the wing root and SOB moving in the spanwise direction
-    fileNames = ["wing-ffd-advanced-coarse.xyz", "wing-ffd-advanced-med.xyz", "wing-ffd-advanced-fine.xyz"]
+    fileNames = [
+        "wing-ffd-advanced-coarse.xyz",
+        "wing-ffd-advanced-med.xyz",
+        "wing-ffd-advanced-fine.xyz",
+    ]
 
     # The first segment of the FFD will contain 3 sections around the root, purely to enforce that the wing root does
     # not move away from the symmetry plane
@@ -133,7 +137,7 @@ elif args.ffdType == "advanced":
     ffdLEList[5] = wingLEList[-1]
     ffdTEList[5] = wingTEList[-1]
 
-    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames):
+    for nSpan, nChord, file in zip(numFFDSpan, numFFDChord, fileNames, strict=True):
         createFittedWingFFD(
             wingSurface,
             surfFormat="point-vector",

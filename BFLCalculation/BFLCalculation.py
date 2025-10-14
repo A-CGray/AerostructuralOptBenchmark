@@ -172,7 +172,9 @@ class BFLCalculation:
         if not self.outputs_up_to_date:
             self.run_model()
         om_gradients = self.om_problem.compute_totals(
-            of=list(self.OUTPUT_MAP.values()), wrt=list(self.INPUT_MAP.values()), return_format="dict"
+            of=list(self.OUTPUT_MAP.values()),
+            wrt=list(self.INPUT_MAP.values()),
+            return_format="dict",
         )
         gradients = {output_name: {} for output_name in self.OUTPUT_MAP.keys()}
         for output_name, om_output_name in self.OUTPUT_MAP.items():
@@ -234,7 +236,12 @@ class BFLCalculation:
                 )
 
         takeoff_fig.legend(
-            [r"V0 $\rightarrow$ V1", r"V1 $\rightarrow$ Vr", "Rotate", r"V1 $\rightarrow$ V0"],
+            [
+                r"V0 $\rightarrow$ V1",
+                r"V1 $\rightarrow$ Vr",
+                "Rotate",
+                r"V1 $\rightarrow$ V0",
+            ],
             loc=(0.067, 0.6),
             fontsize="small",
         )

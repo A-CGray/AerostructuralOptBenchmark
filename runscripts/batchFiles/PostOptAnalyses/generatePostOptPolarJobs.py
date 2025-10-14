@@ -4,7 +4,13 @@ import numpy as np
 
 runTime = 8
 
-nas = PBS.nas(group_list="a1607", proc_type="cas", time=runTime, queue_name="normal", profile_file="")
+nas = PBS.nas(
+    group_list="a1607",
+    proc_type="cas",
+    time=runTime,
+    queue_name="normal",
+    profile_file="",
+)
 nas.shell = "zsh"
 nas.mail_options = "bae"
 
@@ -16,15 +22,31 @@ baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 initDVs = {
     "FixedPlanform": {
-        "Linear": os.path.join(baseOutputDir, "FixedPlanformOpt", "FixedPlanformOpt-L2-Linear", "Outputs.pkl"),
-        "Nonlinear": os.path.join(baseOutputDir, "FixedPlanformOpt", "FixedPlanformOpt-L2-Nonlinear", "Outputs.pkl"),
+        "Linear": os.path.join(
+            baseOutputDir,
+            "FixedPlanformOpt",
+            "FixedPlanformOpt-L2-Linear",
+            "Outputs.pkl",
+        ),
+        "Nonlinear": os.path.join(
+            baseOutputDir,
+            "FixedPlanformOpt",
+            "FixedPlanformOpt-L2-Nonlinear",
+            "Outputs.pkl",
+        ),
     },
     "VariablePlanform": {
         "Linear": os.path.join(
-            baseOutputDir, "VariablePlanformOpt", "VariablePlanformOpt-L2-Linear-Part3", "Outputs.pkl"
+            baseOutputDir,
+            "VariablePlanformOpt",
+            "VariablePlanformOpt-L2-Linear-Part3",
+            "Outputs.pkl",
         ),
         "Nonlinear": os.path.join(
-            baseOutputDir, "VariablePlanformOpt", "VariablePlanformOpt-L2-Nonlinear-Part3", "Outputs.pkl"
+            baseOutputDir,
+            "VariablePlanformOpt",
+            "VariablePlanformOpt-L2-Nonlinear-Part3",
+            "Outputs.pkl",
         ),
     },
 }
@@ -57,7 +79,12 @@ for optType in ["FixedPlanform", "VariablePlanform"]:
 --output {outputDir}"""
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-        jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+        jobBody = [
+            f"mkdir -p {fullOutputDir}",
+            f"cp {jobName}.pbs {fullOutputDir}/",
+            f"cd {runDir}",
+            runCommand,
+        ]
         jobBody = [f"\n{line}" for line in jobBody]
 
         nas.write_job_file(

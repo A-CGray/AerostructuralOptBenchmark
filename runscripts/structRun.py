@@ -71,7 +71,12 @@ parser.add_argument(
     choices=["check", "analysis", "derivCheck", "opt"],
     help="Task to run",
 )
-parser.add_argument("--flightPointSet", type=str, default="maneuverOnly", choices=list(flightPointSets.keys()))
+parser.add_argument(
+    "--flightPointSet",
+    type=str,
+    default="maneuverOnly",
+    choices=list(flightPointSets.keys()),
+)
 
 # --- Optimiser Options ---
 parser.add_argument(

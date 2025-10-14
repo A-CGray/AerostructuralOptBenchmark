@@ -379,9 +379,17 @@ class ArrayMergeComp(om.ExplicitComponent):
     """
 
     def initialize(self):
-        self.options.declare("arraySizes", types=list, desc="List of sizes of each array to be merged", default=None)
         self.options.declare(
-            "arrayInds", types=list, desc="List of index arrays for each array to be merged", default=None
+            "arraySizes",
+            types=list,
+            desc="List of sizes of each array to be merged",
+            default=None,
+        )
+        self.options.declare(
+            "arrayInds",
+            types=list,
+            desc="List of index arrays for each array to be merged",
+            default=None,
         )
         self.options.declare("outSize", types=int, desc="Size of the output array", default=None)
 

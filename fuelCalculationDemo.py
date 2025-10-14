@@ -80,7 +80,13 @@ fig, ax = plt.subplots(figsize=(8, 8))
 cmap = plt.get_cmap("cool")
 for ii in range(numBays):
     color = cmap(ii / (numBays - 1))
-    ax.plot(fuelMasses / 2, bayFuelMasses[ii, :], label=f"Rib Bay {ii + 1}", clip_on=False, color=color)
+    ax.plot(
+        fuelMasses / 2,
+        bayFuelMasses[ii, :],
+        label=f"Rib Bay {ii + 1}",
+        clip_on=False,
+        color=color,
+    )
 
 niceplots.adjust_spines(ax)
 niceplots.label_line_ends(ax)

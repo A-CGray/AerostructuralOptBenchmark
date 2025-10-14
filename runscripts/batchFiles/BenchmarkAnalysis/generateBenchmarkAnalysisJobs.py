@@ -13,7 +13,7 @@ runDir = "~/repos/AerostructuralOptBenchmark/runscripts"
 baseOutputDir = "/nobackup/achris10/AerostructuralOptBenchmark"
 
 for linType in ["Linear", "Nonlinear"]:
-    for level, meshSize in zip(levels, meshSizes):
+    for level, meshSize in zip(levels, meshSizes, strict=True):
         idealNumProcs = 3 * meshSize // cellsPerProc
         numNodes = max(1, idealNumProcs // nas.ncpus_per_node)
         numNodes = min(10, numNodes)
@@ -28,7 +28,12 @@ for linType in ["Linear", "Nonlinear"]:
         runCommand = f"python aeroStructRun-MultipointParallel.py --task analysis --flightPointSet 3pt --aeroLevel {level} --structLevel 1 --output {outputDir} {linOption}"
         runCommand = nas.create_mpi_command(runCommand, output_root_name=os.path.join(fullOutputDir, jobName))
 
-        jobBody = [f"mkdir -p {fullOutputDir}", f"cp {jobName}.pbs {fullOutputDir}/", f"cd {runDir}", runCommand]
+        jobBody = [
+            f"mkdir -p {fullOutputDir}",
+            f"cp {jobName}.pbs {fullOutputDir}/",
+            f"cd {runDir}",
+            runCommand,
+        ]
         jobBody = [f"\n{line}" for line in jobBody]
 
         nas.write_job_file(
