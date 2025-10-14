@@ -702,7 +702,7 @@ class AnalysisPoint(Multipoint):
                     "fuelBurn",
                     fuelBurnGroup,
                     promotes_inputs=["landingGrossMass"],
-                    promotes_outputs=["TotalFuelBurn", "cruiseStartMass", "TakeoffMass"],
+                    promotes_outputs=["totalFuelBurn", "cruiseStartMass", "takeoffMass"],
                 )
                 for force in [
                     "lift",
@@ -719,7 +719,7 @@ class AnalysisPoint(Multipoint):
                 # --- Compute the wing loading ---
                 wingLoadingComp = performanceCalc.WingLoadingComp()
                 self.add_subsystem("wingLoading", wingLoadingComp, promotes_outputs=["*"])
-                self.connect("TakeoffMass", "wingLoading.MTOM")
+                self.connect("takeoffMass", "wingLoading.MTOM")
                 self.connect("PlanformValues.wimpressArea", "wingLoading.wingArea")
 
                 # --- Compute the balanced field length ---
@@ -749,7 +749,7 @@ class AnalysisPoint(Multipoint):
                     ]
                 )
                 self.add_subsystem("takeoff", takeoffGroup)
-                self.connect("TakeoffMass", "takeoff.ac|weights|MTOW")
+                self.connect("takeoffMass", "takeoff.ac|weights|MTOW")
                 self.connect("doubleWingArea", "takeoff.ac|geom|wing|S_ref")
                 self.connect("PlanformValues.aspectRatio", "takeoff.ac|geom|wing|AR")
                 self.connect("PlanformValues.QCSweep", "takeoff.ac|geom|wing|c4sweep")
@@ -865,39 +865,45 @@ flightPointProb.model = AnalysisPoint()
 
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm)
-performanceProb.model = performanceCalc.AircraftPerformanceGroup(aircraftSpecs=aircraftSpecs, flightPoints=flightPoints)
-if hasCruisePoint:
-    performanceProb.model.set_input_defaults("wingArea", val=wingGeometry["wing"]["planformArea"], units="m**2")
+performanceProb.model = performanceCalc.FuelAndMassConstraintGroup(
+    aircraftSpecs=aircraftSpecs, flightPointSet=flightPoints
+)
 
 if args.task in ["trim", "opt", "check"]:
     # ==============================================================================
     # Setup constraints
     # ==============================================================================
 
-    # --- Lift constraint for each flight point ---
+    # --- Lift and fuel mass constraint for each flight point ---
     # Generally, massively scaling down the lift difference helps the optimiser make better progress, but in the trim
     # task, where all we care about is hitting the lift constraints, we won't scale them down quite as much so that we
     # really nail the right lift value.
-    liftConScale = 1e-8 if args.task == "trim" else 1e-6
-    performanceProb.model.add_constraint(
-        f"{localFlightPoint.name}LiftDiff", equals=0.0, scaler=liftConScale, cache_linear_solution=True
-    )
+    liftConScale = 1e-6 if args.task == "trim" else 1e-8
+    if isAeroStruct:
+        performanceProb.model.add_constraint(
+            f"{localFlightPoint.name}LiftDiff", equals=0.0, scaler=liftConScale, cache_linear_solution=True
+        )
+    if args.useFuelMassDVs:
+        performanceProb.model.add_constraint(
+            f"{localFlightPoint.name}FuelMassDiff", equals=0.0, scaler=liftConScale, cache_linear_solution=True
+        )
 
     if args.task in ["opt", "check"]:
         # --- TACS Failure constraints ---
-        for group in localFlightPoint.failureGroups:
-            failureConName = f"{localFlightPoint.name}.{group}_ksFailure"
-            flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
+        if localFlightPoint.failureGroups is not None:
+            for group in localFlightPoint.failureGroups:
+                failureConName = f"{localFlightPoint.name}.{group}_ksFailure"
+                flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
 
         # --- Geometric constraints ---
         if not structOnlyOpt and args.addGeoDVs:
             # --- Wingbox volume constraint ---
-            if args.span or args.taper or args.shape:
+            if isCruisePoint and (args.span or args.taper or args.shape):
                 performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
             # --- Wing loading constraint ---
-            if args.span or args.taper:
+            if ptID == 0 and (args.span or args.taper):
                 # This constraint should only be applied if the optimiser has control over the wing planform
-                performanceProb.model.add_constraint(
+                flightPointProb.model.add_constraint(
                     "wingLoading",
                     upper=args.maxWingLoading,
                     scaler=1.0 / args.maxWingLoading,
@@ -905,20 +911,21 @@ if args.task in ["trim", "opt", "check"]:
                 )
     # --- Buffet constraints ---
     if "buffet" in localFlightPoint.name.lower():
-        performanceProb.model.add_constraint(
+        flightPointProb.model.add_constraint(
             f"{localFlightPoint.name}BuffetCon", upper=0.0, scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"])
         )
 
     # ==============================================================================
     # Setup objective
     # ==============================================================================
-    if ptID == 0:
-        if args.task == "trim" or structOnlyOpt:
+    if args.task == "trim" or structOnlyOpt:
+        if ptID == 0:
             # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
             # just satisfies the trim constraints
             performanceProb.model.add_objective("airframeMass.wingMass", scaler=1e-3, cache_linear_solution=True)
-        elif args.optType == "fuelburn":
-            performanceProb.model.add_objective("TotalFuelBurn", scaler=1e-4, cache_linear_solution=True)
+    elif args.optType == "fuelburn":
+        if isCruisePoint:
+            flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
 
 
 # ==============================================================================
@@ -954,20 +961,18 @@ gradFuncs = []
 # model
 dvMap = {}
 for inpName in performanceProbInputs:
-    if inpName == "wingboxMass":
-        dvMap[inpName] = f"{flightPoints[0].name}.mass"
-    elif inpName == "wingboxVolume":
-        dvMap[inpName] = "geometry.WingboxVolume"
-    elif inpName == "wingArea":
-        dvMap[inpName] = "geometry.WingArea"
+    # These have the same name in both models
+    if (
+        inpName in ["wingboxVolume", "takeoffMass", "midCruiseMass", "cruiseStartMass", "landingGrossMass"]
+        or "fuelMass" in inpName
+    ):
+        dvMap[inpName] = inpName
+    elif inpName == "fuelBurn":
+        dvMap[inpName] = "totalFuelBurn"
     elif "Drag" in inpName or "Lift" in inpName:
         fpName = inpName[:-4]
         forceName = inpName[-4:]
         dvMap[inpName] = f"{fpName}.aero_post.{forceName.lower()}"
-    elif "SepArea" in inpName:
-        fpName = inpName.replace("SepArea", "")
-        sepSensorFuncName = "sepsensorksarea" if args.sepSensorType == "new" else "sepsensor"
-        dvMap[inpName] = f"{fpName}.aero_post.{sepSensorFuncName}"
 
 # The DVMap only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
 dvMap = globalComm.bcast(dvMap, root=0)
@@ -1218,35 +1223,35 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 def objCon(funcs, printOK, passThroughFuncs):
     # Multiploint computes the derivatives through this objCOn function using complex step, printOK is False when objCon
     # is being complex-stepped
-    # performanceProb.set_complex_step_mode(not printOK)
+    performanceProb.set_complex_step_mode(not printOK)
 
-    # if ptComm.rank == 0 and printOK:
-    #     print("\n==================================================")
-    #     print("OBJCON Functions:")
-    #     pp(funcs)
-    #     print("==================================================\n")
+    if ptComm.rank == 0 and printOK:
+        print("\n==================================================")
+        print("OBJCON Functions:")
+        pp(funcs)
+        print("==================================================\n")
 
-    # # Map from flight point outputs to performance model inputs
-    # for performanceVarName, funcName in dvMap.items():
-    #     performanceProb.set_val(performanceVarName, funcs[funcName])
-    # performanceProb.run_model()
+    # Map from flight point outputs to performance model inputs
+    for performanceVarName, funcName in dvMap.items():
+        performanceProb.set_val(performanceVarName, funcs[funcName])
+    performanceProb.run_model()
 
-    # outputs = globalComm.bcast(performanceProb.model.list_outputs(return_format="dict", print_arrays=False), root=0)
-    # for output in outputs.items():
-    #     funcs[output[1]["prom_name"]] = output[1]["val"]
+    outputs = globalComm.bcast(performanceProb.model.list_outputs(return_format="dict", print_arrays=False), root=0)
+    for output in outputs.items():
+        funcs[output[1]["prom_name"]] = output[1]["val"]
 
-    # # Compute pareto font objective, weighted combination of fuel burn and TOGM
-    # if args.optType == "pareto":
-    #     funcs["paretoObj"] = (
-    #         args.paretoWeight * funcs["TotalFuelBurn"] / 1e4
-    #         + (1 - args.paretoWeight) * funcs["TakeoffMass"] / aircraftSpecs["refMTOW"]
-    #     )
+    # Compute pareto font objective, weighted combination of fuel burn and TOGM
+    if args.optType == "pareto":
+        funcs["paretoObj"] = (
+            args.paretoWeight * funcs["totalFuelBurn"] / 1e4
+            + (1 - args.paretoWeight) * funcs["takeoffMass"] / aircraftSpecs["refMTOW"]
+        )
 
-    # if ptComm.rank == 0 and printOK:
-    #     print("\n==================================================")
-    #     print("OBJCON Functions:")
-    #     pp(funcs)
-    #     print("==================================================\n")
+    if ptComm.rank == 0 and printOK:
+        print("\n==================================================")
+        print("OBJCON Functions:")
+        pp(funcs)
+        print("==================================================\n")
 
     return funcs
 

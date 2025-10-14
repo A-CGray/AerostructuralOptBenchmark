@@ -2,6 +2,9 @@ from baseclasses import AeroProblem
 from typing import List, Optional
 
 
+VALID_MASS_CONFIGS = ["landingGrossMass", "takeoffMass", "midCruiseMass", "cruiseStartMass"]
+
+
 class FlightPoint(AeroProblem):
     def __init__(
         self,
@@ -31,6 +34,8 @@ class FlightPoint(AeroProblem):
 
         self.loadFactor = loadFactor
         self.fuelFraction = fuelFraction
+        if massConfig is not None and massConfig not in VALID_MASS_CONFIGS:
+            raise ValueError(f"Invalid massConfig {massConfig}, must be one of {VALID_MASS_CONFIGS}")
         self.massConfig = massConfig
         self.failureGroups = failureGroups
 
@@ -62,5 +67,7 @@ class LoadCase:
         self.name = name
         self.loadFactor = loadFactor
         self.fuelFraction = fuelFraction
+        if massConfig is not None and massConfig not in VALID_MASS_CONFIGS:
+            raise ValueError(f"Invalid massConfig {massConfig}, must be one of {VALID_MASS_CONFIGS}")
         self.massConfig = massConfig
         self.failureGroups = failureGroups
