@@ -57,7 +57,6 @@ class Group(om.Group):
             FuelDistributionComp(
                 fuelDensity=aircraftSpecs["fuelDensity"],
                 wingboxVolumeFraction=aircraftSpecs["wingboxFuelVolumeFraction"],
-                auxTankVolume=aircraftSpecs["auxFuelVolume"],
                 numRibBays=numBays,
                 maxSmoothingRelError=1e-1,
             ),
