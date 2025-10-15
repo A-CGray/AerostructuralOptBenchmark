@@ -54,7 +54,7 @@ FUEL_DENSITY = 804.0  # kg/m^3
 # Engine Data
 # ==============================================================================
 # based on wikipedia value for the BR700 (the 717 uses the BR715) https://en.wikipedia.org/wiki/Thrust-specific_fuel_consumption#Typical_values_of_SFC_for_thrust_engines
-TSFC = 18.1e-6  # (kg/N-s),
+TSFC = 18.0e-6 * 9.81  # (kg/kg-s)
 MAX_THRUST_PER_ENGINE = (
     95.3e3  # N, maximum thrust per BR715-C1-30 engine (https://en.wikipedia.org/wiki/Boeing_717#Specifications)
 )
