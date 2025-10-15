@@ -700,6 +700,7 @@ class FuelAndMassConstraintGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
         self.options.declare("flightPointSet", types=list)
+        self.options.declare("includeFuelConstraints", types=bool, default=True)
 
     def setup(self):
         specs = self.options["aircraftSpecs"]
@@ -712,25 +713,26 @@ class FuelAndMassConstraintGroup(om.Group):
             promotes=["*"],
         )
 
-        self.add_subsystem(
-            "fuelConsistency",
-            FuelConsistencyGroup(
-                aircraftSpecs=specs,
-                flightPointSet=self.options["flightPointSet"],
-            ),
-            promotes=["*"],
-        )
+        if self.options["includeFuelConstraints"]:
+            self.add_subsystem(
+                "fuelConsistency",
+                FuelConsistencyGroup(
+                    aircraftSpecs=specs,
+                    flightPointSet=self.options["flightPointSet"],
+                ),
+                promotes=["*"],
+            )
 
-        self.add_subsystem(
-            "FuelTankUsage",
-            FuelTankUsageComp(
-                reserveFuelMass=specs["reserveFuelMass"],
-                fuelDensity=specs["fuelDensity"],
-                wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
-                auxTankVolume=specs["auxFuelVolume"],
-            ),
-            promotes=["*"],
-        )
+            self.add_subsystem(
+                "FuelTankUsage",
+                FuelTankUsageComp(
+                    reserveFuelMass=specs["reserveFuelMass"],
+                    fuelDensity=specs["fuelDensity"],
+                    wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
+                    auxTankVolume=specs["auxFuelVolume"],
+                ),
+                promotes=["*"],
+            )
 
 
 # Test the performance group derivatives

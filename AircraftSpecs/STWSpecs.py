@@ -140,4 +140,5 @@ aircraftSpecs = {
     "climbSpeed": CLIMB_SPEED,
     "climbRange": CLIMB_RANGE,
     "takeoffFlapSetting": TAKEOFF_FLAP_SETTING,
+    "maxBFL": MAX_BFL,
 }

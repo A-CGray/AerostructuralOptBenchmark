@@ -318,6 +318,9 @@ def setupDVGeo(
 
     # --- Add section t/c computation ---
     if computeToC:
+        # NOTE: I decided against the approach below of only computing the t/c over the flapped region of the wing,
+        # because the t/c value is also used to compute the overall drag coefficient of the wing for the takeoff analysis
+
         # Since we are using the t/c values for the openconcept CL max estimation, we only want to compute the t/c over the
         # flapped span of the wing
         # FLAP_INBOARD_SPAN_FRAC = wingGeometry["wing"]["flapInboardSpanFrac"]
