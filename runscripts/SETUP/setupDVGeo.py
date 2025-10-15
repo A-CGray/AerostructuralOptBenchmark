@@ -265,9 +265,11 @@ def setupDVGeo(
     LECoords = wingGeometry["wing"]["LECoords"]
     LECoords[:, chordIndex] += 2e-2  # Need to be slightly behind the LE
     LECoords[0, spanIndex] += 1e-4  # Need to be in from the symmetry plane
+    LECoords[-1, spanIndex] -= 1e-2  # Need to be in from the tip
+
     TECoords = wingGeometry["wing"]["TECoords"]
     TECoords[:, chordIndex] -= 1e-2  # Need to be slightly ahead of the TE
-    TECoords[0, spanIndex] += 1e-2  # Need to be in from the symmetry plane
+    TECoords[0, spanIndex] += 1e-4  # Need to be in from the symmetry plane
     TECoords[-1, spanIndex] -= 1e-2  # Need to be in from the tip
 
     # --- Wingbox volume ---
