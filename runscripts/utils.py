@@ -247,6 +247,22 @@ def convertSensDict(openmdaoSensDict):
 
 
 def getRelevantInputs(omProb, outputName, dvOnly=False):
+    """Find the inputs that a given output depends on using OpenMDAO's relevance system
+
+    Parameters
+    ----------
+    omProb : OpenMDAO Problem
+        The OpenMDAO problem to extract the relevant inputs from
+    outputName : str
+        The name of the output to find the relevant inputs for, should be the absolute name
+    dvOnly : bool, optional
+        Whether to limit the search to inputs that have been declared as design variables, by default False
+
+    Returns
+    -------
+    list
+        Absolute names of all inputs that the output depends on
+    """
     wrt = []
     relevance = omProb.model._relevance
     if dvOnly:

@@ -908,6 +908,7 @@ class AnalysisPoint(Multipoint):
                 rtol=1e-8 * args.tolFactor,
                 maxiter=50,
                 iprint=2,
+                rhs_checking=True,
             )
             scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
 
@@ -1041,9 +1042,6 @@ if args.task in ["trim", "opt", "check"]:
 # ==============================================================================
 # Setup the model for this proc's flight point and get the names of its outputs
 flightPointProb.setup(force_alloc_complex=isComplex, mode="rev")
-# Need to call final_setup so that sizes of inputs and outputs are figured out correctly, otherwise calling
-# `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
-flightPointProb.final_setup()
 tmp = ptComm.bcast(flightPointProb.model.list_outputs(out_stream=None), root=0)
 flightPointProbOutputs = {}
 for output in tmp:
@@ -1066,7 +1064,6 @@ performanceProb.model._problem_meta["static_mode"] = not performanceProb.model._
 for inpName in performanceProbInputs:
     performanceProb.model.add_design_var(inpName)
 performanceProb.model._problem_meta["static_mode"] = not performanceProb.model._problem_meta["static_mode"]
-performanceProb.final_setup()
 
 # Define the map from the outputs of the flight point models to the inputs required for the performance calculation
 # model
@@ -1097,6 +1094,29 @@ perf2FlightPointMap = globalComm.bcast(perf2FlightPointMap, root=0)
 
 if ptComm.rank == 0:
     pp(perf2FlightPointMap)
+
+# Later on, I want to use OpenMDAO's relevance checking to figure out which design variables the flight point outputs
+# that get passed to the performance model depend on. Unfortunately, OpenMDAO's relevance checking only works for
+# objectives and constraints, so as a workaround, I'm going to declare these outputs as constraints with no bounds.
+# Like above, this only works if I temporarily toggle the static_mode flag.
+fakeConstraintPrefix = "_relevanceCheck"
+flightPointProb.model._problem_meta["static_mode"] = not flightPointProb.model._problem_meta["static_mode"]
+existingResponses = (
+    list(flightPointProb.model._responses.keys())
+    + list(flightPointProb.model._static_responses.keys())
+    + list(flightPointProb.model._design_vars.keys())
+    + list(flightPointProb.model._static_design_vars.keys())
+)
+for outputName in perf2FlightPointMap.values():
+    if outputName in flightPointProbOutputs and outputName not in existingResponses:
+        flightPointProb.model.add_constraint(outputName, alias=f"{fakeConstraintPrefix}{outputName}")
+flightPointProb.model._problem_meta["static_mode"] = not flightPointProb.model._problem_meta["static_mode"]
+
+
+# Need to call final_setup so that sizes of inputs and outputs are figured out correctly, otherwise calling
+# `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
+flightPointProb.final_setup()
+performanceProb.final_setup()
 
 # ==============================================================================
 # Potentially set initial DVs from a previous run
@@ -1584,9 +1604,14 @@ if args.task in ["check", "opt", "trim"]:
     # Define constraints
     # ==============================================================================
     # Add all constraints from the flight point model, addConstraintFromOpenMDAO will automatically figure out which DVs
-    # each constraint depends on using the OpenMDAO model
+    # each constraint depends on using the OpenMDAO model. But we need to skip the fake constraints we added above to
+    # get relevance checking to work.
     for con in flightPointProb.model.get_constraints().values():
-        addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt="auto")
+        if con["alias"] is not None and con["alias"].startswith(fakeConstraintPrefix):
+            if ptRank == 0:
+                print(f"Skipping fake constraint {con['name']}")
+        else:
+            addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt="auto")
 
     # For the constraints coming from the performance model, things are more complicated because the design variables
     # are not in the performance model. We therefore need to do the following for each constraint in the performance
@@ -1622,26 +1647,33 @@ if args.task in ["check", "opt", "trim"]:
         # they depend on
 
         # TODO: This doesn't work because OpenMDAO only seems to be able to compute relevance for outputs that are constraints or objectives, see if there's a way around this
-        # relevantDVs = []
-        # for output in relevantFlightPointOutputs:
-        #     if output in flightPointProbOutputs:
-        #         relevantDVs += getRelevantInputs(flightPointProb, getAbsName(flightPointProb.model, output), dvOnly=True)
-        # relevantDVs = [getPromName(flightPointProb.model, inp) for inp in relevantDVs]
-        # relevantDVs = list(set(relevantDVs))
-        # # Gather the relevant DVs from all procs, combine them into a single list, then send back to all procs
-        # allRelevantDVs = globalComm.gather(relevantDVs, root=0)
-        # if globalRank == 0:
-        #     relevantDVs = []
-        #     for rdvs in allRelevantDVs:
-        #         relevantDVs += rdvs
-        #     relevantDVs = list(set(relevantDVs))
-        # relevantDVs = globalComm.bcast(relevantDVs, root=0)
-        # if ptRank == 0:
-        #     print("and thus on design variables:")
-        #     for dv in relevantDVs:
-        #         print(f"- {dv}", flush=True)
+        relevantDVs = []
+        for output in relevantFlightPointOutputs:
+            if output in flightPointProbOutputs:
+                if output in flightPointProb.model.get_design_vars():
+                    # If the output is itself a design variable then we can just add it straight away
+                    relevantDVs.append(output)
+                else:
+                    # Otherwise we need to figure out which DVs it depends on
+                    relevantDVs += getRelevantInputs(
+                        flightPointProb, flightPointProb.model._resolver.source(output), dvOnly=True
+                    )
+        relevantDVs = [getPromName(flightPointProb.model, inp) for inp in relevantDVs]
+        relevantDVs = list(set(relevantDVs))
+        # Gather the relevant DVs from all procs, combine them into a single list, then send back to all procs
+        allRelevantDVs = globalComm.gather(relevantDVs, root=0)
+        if globalRank == 0:
+            relevantDVs = []
+            for rdvs in allRelevantDVs:
+                relevantDVs += rdvs
+            relevantDVs = list(set(relevantDVs))
+        relevantDVs = globalComm.bcast(relevantDVs, root=0)
+        if ptRank == 0:
+            print("and thus on design variables:")
+            for dv in relevantDVs:
+                print(f"- {dv}", flush=True)
 
-        addConstraintFromOpenMDAO(con, optProb, performanceProb)  # , wrt=relevantDVs)
+        addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=relevantDVs)
 
     # ==============================================================================
     # Define objective
