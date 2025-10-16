@@ -790,6 +790,15 @@ class AnalysisPoint(Multipoint):
                 self.connect("takeoffMass", "wingLoading.MTOM")
                 self.connect("PlanformValues.wimpressArea", "wingLoading.wingArea")
 
+                # --- Compute the fuel burn/TOGM pareto objective if necessary ---
+                if args.optType == "pareto":
+                    paretoComp = om.AddSubtractComp(
+                        output_name="paretoObj",
+                        input_names=["totalFuelBurn", "takeoffMass"],
+                        scaling_factors=[args.paretoWeight / 1e4, (1 - args.paretoWeight) / aircraftSpecs["refMTOW"]],
+                    )
+                    self.add_subsystem("paretoComp", paretoComp, promotes=["*"])
+
                 # --- Compute the balanced field length ---
                 if args.includeBFL:
                     # OpenConcept expects the wing area for the full aircraft, so we need to double it
@@ -1352,13 +1361,6 @@ def objCon(funcs, printOK, passThroughFuncs):
     )
     for output in outputs.items():
         funcs[output[1]["prom_name"]] = output[1]["val"]
-
-    # Compute pareto font objective, weighted combination of fuel burn and TOGM
-    if args.optType == "pareto":
-        funcs["paretoObj"] = (
-            args.paretoWeight * funcs["totalFuelBurn"] / 1e4
-            + (1 - args.paretoWeight) * funcs["takeoffMass"] / aircraftSpecs["refMTOW"]
-        )
 
     if ptComm.rank == 0 and printOK:
         print("\n==================================================")
