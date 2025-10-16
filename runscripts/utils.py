@@ -111,7 +111,7 @@ def setValsFromFiles(files, prob):
                     print(f"Setting {dv} from {fileName}")
             except KeyError:
                 # If it's not then try the promoted name
-                promName = get_prom_name(prob.model, dv)
+                promName = getPromName(prob.model, dv)
                 try:
                     prob.set_val(dv, old_design_vars[promName])
                     if prob.comm.rank == 0:
@@ -198,7 +198,7 @@ def getOutputDir():
 # ==============================================================================
 # Functions for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
-def get_prom_name(system, abs_name):
+def getPromName(system, abs_name):
     name = abs_name
 
     if hasattr(system, "_resolver"):
@@ -210,6 +210,22 @@ def get_prom_name(system, abs_name):
         name = abs2prom["input"][abs_name]
     elif abs_name in abs2prom["output"]:
         name = abs2prom["output"][abs_name]
+
+    return name if isinstance(name, str) else name[0]
+
+
+def getAbsName(system, prom_name):
+    name = prom_name
+
+    if hasattr(system, "_resolver"):
+        prom2abs = system._resolver._prom2abs
+    else:
+        prom2abs = system._var_prom2abs
+
+    if prom_name in prom2abs["input"]:
+        name = prom2abs["input"][prom_name]
+    elif prom_name in prom2abs["output"]:
+        name = prom2abs["output"][prom_name]
 
     return name if isinstance(name, str) else name[0]
 
@@ -230,8 +246,43 @@ def convertSensDict(openmdaoSensDict):
     return sensDict
 
 
+def getRelevantInputs(omProb, outputName, dvOnly=False):
+    wrt = []
+    relevance = omProb.model._relevance
+    if dvOnly:
+        namesToCheck = [dvMetadata["source"] for dvMetadata in omProb.model.get_design_vars().values()]
+    else:
+        namesToCheck = [inputData[0] for inputData in omProb.model.list_inputs(out_stream=None)]
+    with relevance.seeds_active(rev_seeds=(outputName,)):
+        for name in namesToCheck:
+            if relevance.is_relevant(name):
+                wrt.append(name)
+    wrt = list(set(wrt))
+    wrt = omProb.model.comm.bcast(wrt, root=0)
+    return wrt
+
+
 def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
-    name = get_prom_name(omProb.model, con["source"])
+    """Add a constraint from an OpenMDAO problem to a pyOptSparse problem
+
+    Parameters
+    ----------
+    con : dict
+        Dictionary describing the constraint, as returned by omProb.model.get_constraints()
+    optProb : pyoptsparse.pyOpt_optimization.Optimization
+        pyOptSparse optimization problem to add the constraint to
+    omProb : openmdao.core.problem.Problem
+        _description_
+    wrt : list or "auto", optional
+        List of design variables this constraint should be assumed to depend on. If "auto",the list will be automatically
+        extracted from the OpenMDAO problem, assuming that all design variables in the OpenMDAO problem are design
+        variables in the pyOptSparse problem and vice versa. By default constraint is assumed to depend on all design variables
+    """
+    name = getPromName(omProb.model, con["source"])
+
+    if isinstance(wrt, str) and wrt.lower() == "auto":
+        wrt = getRelevantInputs(omProb, con["source"], dvOnly=True)
+        wrt = [getPromName(omProb.model, var) for var in wrt]
 
     # Get the scaling factor if there is one
     if con["scaler"] is None:
@@ -267,7 +318,7 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
 
         sparseJac = {}
         for dv, subJac in jac.items():
-            dvPromName = get_prom_name(omProb.model, dv)
+            dvPromName = getPromName(omProb.model, dv)
             if dvPromName in wrt:
                 sparseMat = coo_matrix(subJac)
                 if len(sparseMat.data) != 0:
@@ -281,6 +332,10 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
                     # conVals = Ax - b
                     # b = Ax - conVals
                     offsets += sparseMat.dot(x[dvPromName])
+                else:
+                    # The user (or OpenMDAO) thinks this constraint depends on this variable but it actually doesn't so
+                    # we can safely remove from the wrt list
+                    wrt.remove(dvPromName)
         jac = sparseJac
         ub += offsets
         lb += offsets

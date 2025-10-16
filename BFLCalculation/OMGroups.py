@@ -254,12 +254,13 @@ if __name__ == "__main__":
     import numpy as np
     import niceplots
     import matplotlib.pyplot as plt
+    from mpi4py import MPI
 
     plt.style.use(niceplots.get_style())
 
     numNodes = 11  # Number of nodes for each ODE phase
 
-    prob = om.Problem()
+    prob = om.Problem(comm=MPI.COMM_WORLD)
 
     # By default, all the "variables" we expect to change during optimization will be included in an IndepVarComp within the group. If you are using this takeoff analysis group as part of a larger OpenMDAO model, where you want these values to instead come from the outputs of other components, you can exclude them from the indepvarcomp by passing a list of variable names to the ivc_excludes argument. These variables are:
     # - "ac|geom|wing|S_ref"
@@ -278,6 +279,7 @@ if __name__ == "__main__":
     prob.model.add_objective("bfl.distance_continue", scaler=1e-3, units="ft")  # Minimize balanced field length
 
     prob.setup()
+    prob.final_setup()
 
     # NOTE: It looks like there are some issues with the OpenConcept takeoff model not converting properly between true
     # and equivalent airspeed, which makes the results a bit off if you try to do the takeoff analysis at anything other
@@ -298,7 +300,7 @@ if __name__ == "__main__":
     #     pass  # Not using the ODE transition method
 
     # Set an initial guess for the takeoff flap setting away from te upper bound
-    prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
+    prob.set_val("ac|aero|takeoff_flap_deg", 10.0, units="deg")
 
     prob.run_driver()
 
