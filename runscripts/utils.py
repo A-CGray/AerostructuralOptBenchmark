@@ -230,6 +230,16 @@ def getAbsName(system, prom_name):
     return name if isinstance(name, str) else name[0]
 
 
+def getSource(system, name):
+    """Get the source of a variable."""
+    if hasattr(system, "_resolver"):
+        return system._resolver.source(name)
+    else:
+        raise ValueError(
+            "System does not have a resolver, you must be using an old version of OpenMDAO, please upgrade to at least version 3.39.0"
+        )
+
+
 def convertSensDict(openmdaoSensDict):
     """
     Convert the OpenMDAO sensitivity dictionary into the format expected by pyOptSparse

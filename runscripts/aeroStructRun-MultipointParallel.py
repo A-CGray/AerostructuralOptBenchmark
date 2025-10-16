@@ -70,6 +70,7 @@ from utils import (
     setValsFromFiles,
     saveRunCommand,
     getPromName,
+    getSource,
     addConstraintFromOpenMDAO,
     writeOutputs,
     getTipDisplacement,
@@ -1645,8 +1646,6 @@ if args.task in ["check", "opt", "trim"]:
         # Every proc has the full list of the outputs that are needed, so we can work through that and, if any of the
         # outputs are from this proc's flight point, we can use the flight point OpenMDAO model to figure out which DVs
         # they depend on
-
-        # TODO: This doesn't work because OpenMDAO only seems to be able to compute relevance for outputs that are constraints or objectives, see if there's a way around this
         relevantDVs = []
         for output in relevantFlightPointOutputs:
             if output in flightPointProbOutputs:
@@ -1656,7 +1655,7 @@ if args.task in ["check", "opt", "trim"]:
                 else:
                     # Otherwise we need to figure out which DVs it depends on
                     relevantDVs += getRelevantInputs(
-                        flightPointProb, flightPointProb.model._resolver.source(output), dvOnly=True
+                        flightPointProb, getSource(flightPointProb.model, output), dvOnly=True
                     )
         relevantDVs = [getPromName(flightPointProb.model, inp) for inp in relevantDVs]
         relevantDVs = list(set(relevantDVs))
