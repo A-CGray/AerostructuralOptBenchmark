@@ -288,6 +288,36 @@ def getRelevantInputs(omProb, outputName, dvOnly=False):
     return wrt
 
 
+def addDesignVarsFromOpenMDAO(optProb, omProb):
+    """Add the design variables from an OpenMDAO problem to a pyOptSparse problem
+
+    Parameters
+    ----------
+    optProb : pyoptsparse.pyOpt_optimization.Optimization
+        pyOptSparse optimization problem to add the design variable to
+    omProb : openmdao.core.problem.Problem
+        OpenMDAO problem containing the design variable
+    """
+    unspoortedProps = ["ref", "ref0", "indices", "adder"]
+    for dvName, dv in omProb.model.get_design_vars().items():
+        dv["value"] = omProb.get_val(dvName)
+        for prop in unspoortedProps:
+            if dv[prop] is not None:
+                raise ValueError(
+                    f"Design variable {dvName} has the {prop} property set, which is not supported by pyOptSparse"
+                )
+        if dv["scaler"] is None:
+            dv["scaler"] = 1.0
+        optProb.addVarGroup(
+            dvName,
+            nVars=dv["global_size"],
+            value=dv["value"],
+            lower=dv["lower"] / dv["scaler"],
+            upper=dv["upper"] / dv["scaler"],
+            scale=dv["scaler"],
+        )
+
+
 def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
     """Add a constraint from an OpenMDAO problem to a pyOptSparse problem
 
@@ -298,7 +328,7 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
     optProb : pyoptsparse.pyOpt_optimization.Optimization
         pyOptSparse optimization problem to add the constraint to
     omProb : openmdao.core.problem.Problem
-        _description_
+        OpenMDAO problem containing the constraint
     wrt : list or "auto", optional
         List of design variables this constraint should be assumed to depend on. If "auto",the list will be automatically
         extracted from the OpenMDAO problem, assuming that all design variables in the OpenMDAO problem are design
@@ -520,19 +550,25 @@ class AverageComp(om.ExplicitComponent):
         Size of the input array
     """
 
-    def setup(self):
-        self.add_input("in", shape_by_conn=True)
-        self.add_output("out", shape=1)
+    def initialize(self):
+        self.options.declare("inputName", types=str, desc="Name of the input array")
+        self.options.declare("outputName", types=str, desc="Name of the output variable")
 
-        self.declare_partials("out", "in")
+    def setup(self):
+        self.inpName = self.options["inputName"]
+        self.outName = self.options["outputName"]
+        self.add_input(self.inpName, shape_by_conn=True)
+        self.add_output(self.outName, shape=1)
+
+        self.declare_partials(self.outName, self.inpName)
 
     def compute(self, inputs, outputs):
-        outputs["out"] = np.mean(inputs["in"])
+        outputs[self.outName] = np.mean(inputs[self.inpName])
 
     def compute_partials(self, inputs, J):
         if self.size is None:
-            self.size = len(inputs["in"])
-        J["out", "in"][:] = 1.0 / self.size
+            self.size = len(inputs[self.inpName])
+        J[self.outName, self.inpName][:] = 1.0 / self.size
 
 
 def getStructDVs(structBuilder):

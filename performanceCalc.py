@@ -700,7 +700,8 @@ class FuelAndMassConstraintGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
         self.options.declare("flightPointSet", types=list)
-        self.options.declare("includeFuelConstraints", types=bool, default=True)
+        self.options.declare("includeFuelMassConstraints", types=bool, default=True)
+        self.options.declare("includeFuelVolumeConstraint", types=bool, default=True)
 
     def setup(self):
         specs = self.options["aircraftSpecs"]
@@ -713,7 +714,7 @@ class FuelAndMassConstraintGroup(om.Group):
             promotes=["*"],
         )
 
-        if self.options["includeFuelConstraints"]:
+        if self.options["includeFuelMassConstraints"]:
             self.add_subsystem(
                 "fuelConsistency",
                 FuelConsistencyGroup(
@@ -723,6 +724,7 @@ class FuelAndMassConstraintGroup(om.Group):
                 promotes=["*"],
             )
 
+        if self.options["includeFuelVolumeConstraint"]:
             self.add_subsystem(
                 "FuelTankUsage",
                 FuelTankUsageComp(
