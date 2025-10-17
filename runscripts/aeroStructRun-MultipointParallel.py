@@ -398,16 +398,16 @@ saveRunCommand(parser, args, outputDir)
 
 for ii in range(globalComm.size):
     if globalRank == ii:
-        print(f"Processor {globalRank} is assigned to flight point {localFlightPoint.name}")
+        print(f"Processor {globalRank} is assigned to flight point {localFlightPoint.name}", flush=True)
     globalComm.Barrier()
 
 # --- Redirect I/O ---
 if ptRank == 0:
     outFile = open(os.path.join(localOutputDir, "stdout.out"), "w")
     redirectIO(outFile)
-    print("===============================================================================")
-    print(localFlightPoint.name)
-    print("===============================================================================")
+    print("===============================================================================", flush=True)
+    print(localFlightPoint.name, flush=True)
+    print("===============================================================================", flush=True)
 
 # ==============================================================================
 # TACS Setup
@@ -1112,7 +1112,7 @@ for inpName in performanceProbInputs:
 # The map only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
 perf2FlightPointMap = globalComm.bcast(perf2FlightPointMap, root=0)
 
-if ptComm.rank == 0:
+if ptRank == 0:
     pp(perf2FlightPointMap)
 
 # Later on, I want to use OpenMDAO's relevance checking to figure out which design variables the flight point outputs
@@ -1191,7 +1191,7 @@ for con in performanceProb.model.get_constraints().values():
     relevantInputs = getRelevantInputs(performanceProb, fullConName, dvOnly=True)
     relevantInputs = [getPromName(performanceProb.model, inp) for inp in relevantInputs]
     if ptRank == 0:
-        print(f"\n\nPerformance constraint {promConName} depends on performance inputs:")
+        print(f"\n\nPerformance constraint {promConName} depends on performance inputs:", flush=True)
         for inp in relevantInputs:
             print(f"- {inp}", flush=True)
     # Step 2:
@@ -1208,12 +1208,12 @@ for con in performanceProb.model.get_constraints().values():
 # broadcast gradFuncs to all procs in this set
 gradFuncs = ptComm.bcast(gradFuncs, root=0)
 
-if ptComm.rank == 0:
-    print("\n===============================================================================")
-    print("Grad funcs:")
+if ptRank == 0:
+    print("\n===============================================================================", flush=True)
+    print("Grad funcs:", flush=True)
     for func in gradFuncs:
-        print(f"  - {func}")
-    print("===============================================================================\n")
+        print(f"  - {func}", flush=True)
+    print("===============================================================================\n", flush=True)
 
 # --- Disp funcs ---
 dispFuncs = gradFuncs.copy()
@@ -1248,12 +1248,12 @@ dispFuncs = list(set(dispFuncs))
 # broadcast dispFuncs to all procs in this set
 dispFuncs = ptComm.bcast(dispFuncs, root=0)
 
-if ptComm.rank == 0:
-    print("\n===============================================================================")
-    print("Disp funcs:")
+if ptRank == 0:
+    print("\n===============================================================================", flush=True)
+    print("Disp funcs:", flush=True)
     for func in dispFuncs:
-        print(f"  - {func}")
-    print("===============================================================================\n")
+        print(f"  - {func}", flush=True)
+    print("===============================================================================\n", flush=True)
 
 
 # ==============================================================================
@@ -1283,6 +1283,8 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
+    if ptRank == 0:
+        print("Starting runAeroStructAnalyses", flush=True)
     funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
@@ -1310,15 +1312,16 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
         writeAeroStructSolution()
 
     # Print out some interesting values
-    if ptComm.rank == 0:
+    if ptRank == 0:
         for funcType in ["mass", "failure", "lift", "drag"]:
-            print("\n==================================================")
-            print(f"{funcType.upper()} FUNCTIONS:")
+            print("\n==================================================", flush=True)
+            print(f"{funcType.upper()} FUNCTIONS:", flush=True)
             for func in evalFuncs:
                 if funcType in func.lower():
-                    print(f"{func} = {funcs[func][0]:e}")
-            print("==================================================\n")
-
+                    print(f"{func} = {funcs[func][0]:e}", flush=True)
+            print("==================================================\n", flush=True)
+    if ptRank == 0:
+        print("Finished runAeroStructAnalyses", flush=True)
     return funcs
 
 
@@ -1336,6 +1339,8 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
+    if ptRank == 0:
+        print("Starting computeSens", flush=True)
     funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
@@ -1351,27 +1356,38 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
     funcSens = {}
     if len(gradFuncs) != 0:
+        if ptRank == 0:
+            print("Starting compute_totals", flush=True)
         openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict", debug_print=True)
+        if ptRank == 0:
+            print("Finished compute_totals", flush=True)
         for of, sens in openMDAOTotals.items():
             ofName = getPromName(flightPointProb.model, of)
             funcSens[ofName] = {}
             for wrt, val in sens.items():
                 wrtName = getPromName(flightPointProb.model, wrt)
                 funcSens[ofName][wrtName] = val
-
+    if ptRank == 0:
+        print("Finished populating funcSens", flush=True)
     funcRunTime = time.time() - funcStartTime
     if ptRank == 0:
         with open(funcSensTimingFile, "a") as f:
             f.write(f"{funcRunTime:.16e}\n")
+    if ptRank == 0:
+        print("Finished writing to funcSensTimingFile", flush=True)
 
     # HACK: We need to provide bogus empty derivatives for the functions that are in dispFuncs but not gradFuncs
     # otherwise multipoint will complain
     for func in dispFuncs:
         if func not in funcSens:
             funcSens[func] = {}
+    if ptRank == 0:
+        print("Finished dispFuncs hack", flush=True)
 
     if writeSolution and not args.noFiles:
         writeAeroStructSolution()
+    if ptRank == 0:
+        print("Finished computeSens", flush=True)
 
     return funcSens
 
@@ -1379,15 +1395,17 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 # This is the function that takes the function values from the aerostructural analyses and computes any remaining
 # objective/constraints. In our case this involves running the performance model.
 def objCon(funcs, printOK, passThroughFuncs):
+    if ptRank == 0:
+        print("Starting objCon", flush=True)
     # Multiploint computes the derivatives through this objCOn function using complex step, printOK is False when objCon
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
 
-    if ptComm.rank == 0 and printOK:
-        print("\n==================================================")
-        print("OBJCON Functions:")
+    if ptRank == 0 and printOK:
+        print("\n==================================================", flush=True)
+        print("OBJCON Functions:", flush=True)
         pp(funcs)
-        print("==================================================\n")
+        print("==================================================\n", flush=True)
 
     # Map from flight point outputs to performance model inputs
     for performanceVarName, funcName in perf2FlightPointMap.items():
@@ -1400,11 +1418,16 @@ def objCon(funcs, printOK, passThroughFuncs):
     for output in outputs.items():
         funcs[output[1]["prom_name"]] = output[1]["val"]
 
-    if ptComm.rank == 0 and printOK:
-        print("\n==================================================")
-        print("OBJCON Functions:")
+    if ptRank == 0 and printOK:
+        print("\n==================================================", flush=True)
+        print("OBJCON Functions:", flush=True)
         pp(funcs)
-        print("==================================================\n")
+        print("==================================================\n", flush=True)
+
+    if ptRank == 0:
+        print("Finished objCon", flush=True)
+
+    globalComm.barrier()
 
     return funcs
 
@@ -1548,8 +1571,8 @@ if args.task == "derivCheck":
             os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"),
             "w",
         ) as textFile:
-            if ptComm.rank == 0:
-                print(f"Testing derivatives of {of}, with respect to {wrt}")
+            if ptRank == 0:
+                print(f"Testing derivatives of {of}, with respect to {wrt}", flush=True)
             totalsCheckData = flightPointProb.check_totals(
                 of=of,
                 wrt=wrt,
@@ -1565,8 +1588,8 @@ if args.task == "derivCheck":
             for variable in wrt:
                 flightPointProb.set_val(variable, origDVs[variable])
             flightPointProb.run_model()
-            if ptComm.rank == 0:
-                print(f"Testing derivatives of {of}, with respect to dv_struct")
+            if ptRank == 0:
+                print(f"Testing derivatives of {of}, with respect to dv_struct", flush=True)
             totalsCheckData.update(
                 flightPointProb.check_totals(
                     of=of,
@@ -1635,7 +1658,7 @@ if args.task in ["check", "opt", "trim"]:
     for con in flightPointProb.model.get_constraints().values():
         if con["alias"] is not None and con["alias"].startswith(fakeConstraintPrefix):
             if ptRank == 0:
-                print(f"Skipping fake constraint {con['name']}")
+                print(f"Skipping fake constraint {con['name']}", flush=True)
         else:
             addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt="auto")
 
@@ -1674,7 +1697,7 @@ if args.task in ["check", "opt", "trim"]:
             relevantDVs = list(set(relevantDVs))
         relevantDVs = globalComm.bcast(relevantDVs, root=0)
         if ptRank == 0:
-            print("and thus on design variables:")
+            print("and thus on design variables:", flush=True)
             for dv in relevantDVs:
                 print(f"- {dv}", flush=True)
 
@@ -1691,20 +1714,20 @@ if args.task in ["check", "opt", "trim"]:
         optProb.addObj(obj["name"], scale=obj["scaler"])
 
     # Print out some useful info about the optimization problem
-    if ptComm.rank == 0:
-        print("\n===============================================================================")
-        print("Design variables:")
+    if ptRank == 0:
+        print("\n===============================================================================", flush=True)
+        print("Design variables:", flush=True)
         for dv in optProb.variables:
-            print(f"  - {dv}")
+            print(f"  - {dv}", flush=True)
 
-        print("\nConstraints:")
+        print("\nConstraints:", flush=True)
         for con in optProb.constraints:
-            print(f"  - {con}")
+            print(f"  - {con}", flush=True)
 
-        print("\nObjectives:")
+        print("\nObjectives:", flush=True)
         for obj in objectives:
-            print(f"  - {obj}")
-        print("===============================================================================\n")
+            print(f"  - {obj}", flush=True)
+        print("===============================================================================\n", flush=True)
 
     optProb.printSparsity(verticalPrint=True)
 
@@ -1774,31 +1797,31 @@ if args.task in ["check", "opt", "trim"]:
         # #     alphas[f"{fpName}_AOA"] = flightPointsDict[fpName].alpha
 
         # if ptRank == 0:
-        #     print("Trimming:")
-        #     print("=========")
+        #     print("Trimming:", flush=True)
+        #     print("=========", flush=True)
         # for ii in range(maxTrimIter):
         #     funcs, _ = MP.obj(alphas)
         #     res = []
         #     if ptRank == 0:
-        #         print(f"Trimming Iteration {ii}")
-        #         print("=========================")
+        #         print(f"Trimming Iteration {ii}", flush=True)
+        #         print("=========================", flush=True)
         #     for fpName in flightPointsDict:
         #         res.append(funcs[f"{fpName}LiftDiff"])
         #         if ptRank == 0:
-        #             print("=" * 80)
-        #             print(f"{fpName}: AoA = {alphas[f'{fpName}_AOA']}, LiftDiff: {res[-1]}")
-        #             print("=" * 80)
+        #             print("=" * 80, flush=True)
+        #             print(f"{fpName}: AoA = {alphas[f'{fpName}_AOA']}, LiftDiff: {res[-1]}", flush=True)
+        #             print("=" * 80, flush=True)
         #     res = np.array(res).flatten()
         #     if all(np.abs(res) < 1e-1):
         #         if ptRank == 0:
-        #             print("=" * 80)
-        #             print("Trim solve converged!")
-        #             print("=" * 80)
+        #             print("=" * 80, flush=True)
+        #             print("Trim solve converged!", flush=True)
+        #             print("=" * 80, flush=True)
         #         break
 
         #     sens, _ = MP.sens(alphas, funcs)
         #     if ptRank == 0:
-        #         print(f"{sens=}")
+        #         print(f"{sens=}", flush=True)
         #     # Assemble the jacobian of all the lift differences w.r.t all the alphas
         #     jac = np.zeros((len(res), len(alphas)))
         #     for rowInd, fpName in enumerate(flightPointsDict):
@@ -1806,12 +1829,12 @@ if args.task in ["check", "opt", "trim"]:
         #             if f"{fpName2}_AOA" in sens[f"{fpName}LiftDiff"]:
         #                 jac[rowInd, colInd] = sens[f"{fpName}LiftDiff"][f"{fpName2}_AOA"]
         #     if ptRank == 0:
-        #         print(f"{jac=}")
+        #         print(f"{jac=}", flush=True)
 
         #     # Solve a least squares problem to solve Ax=b with bounds on x
         #     update = -lsq_linear(jac, res, bounds=(-1.0, 1.0), method="bvls", verbose=2).x
         #     if ptRank == 0:
-        #         print(f"{update=}")
+        #         print(f"{update=}", flush=True)
 
         #     for fpInd, fp in enumerate(flightPoints):
         #         alphas[f"{fp.name}_AOA"] += update[fpInd]
