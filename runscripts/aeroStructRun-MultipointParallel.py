@@ -866,7 +866,7 @@ class AnalysisPoint(Multipoint):
             dvScaleFactor=args.geoScalingFactor,
             geoCompName="geometry",
             addGeoDVs=args.addGeoDVs,
-            addGeoConstraints=ptID == 0,
+            addGeoConstraints=ptID == 0 and args.task in ["opt", "check", "derivCheck"],
             computeRibBayVolumes=True,
             computeToC=isCruisePoint,
         )
