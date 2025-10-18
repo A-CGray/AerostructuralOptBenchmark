@@ -1216,7 +1216,12 @@ if ptRank == 0:
     print("===============================================================================\n", flush=True)
 
 # --- Disp funcs ---
+# First add all the grad funcs, and all the functions we need to pass to the performance model
 dispFuncs = gradFuncs.copy()
+dispFuncs += [f for f in perf2FlightPointMap.values() if f in flightPointProbOutputs]
+
+# Now add any additional functions we want to track in the history file even though they're not required for
+# optimisation
 for output in flightPointProbOutputs:
     # Quantities that exist on all flight points but we only want to save them from a single proc set
     if ptID == 0:
@@ -1283,8 +1288,6 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
-    if ptRank == 0:
-        print("Starting runAeroStructAnalyses", flush=True)
     funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
@@ -1320,8 +1323,6 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
                 if funcType in func.lower():
                     print(f"{func} = {funcs[func][0]:e}", flush=True)
             print("==================================================\n", flush=True)
-    if ptRank == 0:
-        print("Finished runAeroStructAnalyses", flush=True)
     return funcs
 
 
@@ -1339,8 +1340,6 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
     writeSolution : bool, optional
         Whether to write out the solution, by default False
     """
-    if ptRank == 0:
-        print("Starting computeSens", flush=True)
     funcStartTime = time.time()
     if x is not None:
         for key, val in x.items():
@@ -1356,38 +1355,26 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
     funcSens = {}
     if len(gradFuncs) != 0:
-        if ptRank == 0:
-            print("Starting compute_totals", flush=True)
         openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict", debug_print=True)
-        if ptRank == 0:
-            print("Finished compute_totals", flush=True)
         for of, sens in openMDAOTotals.items():
             ofName = getPromName(flightPointProb.model, of)
             funcSens[ofName] = {}
             for wrt, val in sens.items():
                 wrtName = getPromName(flightPointProb.model, wrt)
                 funcSens[ofName][wrtName] = val
-    if ptRank == 0:
-        print("Finished populating funcSens", flush=True)
     funcRunTime = time.time() - funcStartTime
     if ptRank == 0:
         with open(funcSensTimingFile, "a") as f:
             f.write(f"{funcRunTime:.16e}\n")
-    if ptRank == 0:
-        print("Finished writing to funcSensTimingFile", flush=True)
 
     # HACK: We need to provide bogus empty derivatives for the functions that are in dispFuncs but not gradFuncs
     # otherwise multipoint will complain
     for func in dispFuncs:
         if func not in funcSens:
             funcSens[func] = {}
-    if ptRank == 0:
-        print("Finished dispFuncs hack", flush=True)
 
     if writeSolution and not args.noFiles:
         writeAeroStructSolution()
-    if ptRank == 0:
-        print("Finished computeSens", flush=True)
 
     return funcSens
 
@@ -1395,21 +1382,14 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 # This is the function that takes the function values from the aerostructural analyses and computes any remaining
 # objective/constraints. In our case this involves running the performance model.
 def objCon(funcs, printOK, passThroughFuncs):
-    if ptRank == 0:
-        print("Starting objCon", flush=True)
     # Multiploint computes the derivatives through this objCOn function using complex step, printOK is False when objCon
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
 
-    if ptRank == 0 and printOK:
-        print("\n==================================================", flush=True)
-        print("OBJCON Functions:", flush=True)
-        pp(funcs)
-        print("==================================================\n", flush=True)
-
     # Map from flight point outputs to performance model inputs
     for performanceVarName, funcName in perf2FlightPointMap.items():
         performanceProb.set_val(performanceVarName, funcs[funcName])
+
     performanceProb.run_model()
 
     outputs = globalComm.bcast(
@@ -1423,11 +1403,6 @@ def objCon(funcs, printOK, passThroughFuncs):
         print("OBJCON Functions:", flush=True)
         pp(funcs)
         print("==================================================\n", flush=True)
-
-    if ptRank == 0:
-        print("Finished objCon", flush=True)
-
-    globalComm.barrier()
 
     return funcs
 
