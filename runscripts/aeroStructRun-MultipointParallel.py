@@ -1242,6 +1242,7 @@ for output in flightPointProbOutputs:
         "avgToC",  # Average wing t/c
         "*CLmax_*",  # CLmax values (clean and flapped)
         "*takeoff|v*",  # Takeoff speeds
+        "*ksFailure",  # TACS failure values
     ]
     for pattern in patterns:
         if fnmatch.fnmatch(output, pattern):
