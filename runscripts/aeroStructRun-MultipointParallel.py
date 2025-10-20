@@ -1306,6 +1306,8 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     if evalFuncs is not None:
         for func in evalFuncs:
             funcs[func] = flightPointProb.get_val(func)
+            if ptRank == 0:
+                print(f"{func} = {funcs[func]}")
 
     funcRunTime = time.time() - funcStartTime
     if ptRank == 0:
@@ -1386,6 +1388,10 @@ def objCon(funcs, printOK, passThroughFuncs):
     # Multiploint computes the derivatives through this objCOn function using complex step, printOK is False when objCon
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
+
+    if ptRank == 0 and printOK:
+        print(f"{funcs=}")
+        print(f"passThroughFuncs")
 
     # Map from flight point outputs to performance model inputs
     for performanceVarName, funcName in perf2FlightPointMap.items():
