@@ -1389,10 +1389,6 @@ def objCon(funcs, printOK, passThroughFuncs):
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
 
-    if ptRank == 0 and printOK:
-        print(f"{funcs=}")
-        print(f"passThroughFuncs")
-
     # Map from flight point outputs to performance model inputs
     for performanceVarName, funcName in perf2FlightPointMap.items():
         performanceProb.set_val(performanceVarName, funcs[funcName])
@@ -1714,6 +1710,13 @@ if args.task in ["check", "opt", "trim"]:
     optProb.printSparsity(verticalPrint=True)
 
     MP.setOptProb(optProb)
+
+    # If any of the objective or constraint functions are also required as inputs for the performance model, we need to explicitly tell this to multipoint so that it passes them to the objCon function
+    for func in list(optProb.constraints.keys()) + list(optProb.objectives.keys()):
+        if func in perf2FlightPointMap.values():
+            if ptRank == 0:
+                print(f"Adding {func} as an objCon input function", flush=True)
+            MP.addConsAsObjConInputs(func)
 
     # ==============================================================================
     # Setup optimiser and driver
