@@ -566,9 +566,8 @@ class AverageComp(om.ExplicitComponent):
         outputs[self.outName] = np.mean(inputs[self.inpName])
 
     def compute_partials(self, inputs, J):
-        if self.size is None:
-            self.size = len(inputs[self.inpName])
-        J[self.outName, self.inpName][:] = 1.0 / self.size
+        inp = inputs[self.inpName]
+        J[self.outName, self.inpName][:] = 1.0 / inp.size
 
 
 def getStructDVs(structBuilder):
