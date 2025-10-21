@@ -45,7 +45,7 @@ def getOptOptions(
             "Iterations limit": 100000000,
             "Major step limit": stepLimit,
             "Nonderivative linesearch": None,
-            "Linesearch tolerance": 0.99,
+            "Linesearch tolerance": 0.999,
             "Difference interval": 1e-6,
             "Function precision": 1e-10,
             "New superbasics limit": 2000,

@@ -230,6 +230,8 @@ if args.task == "derivCheck":
     args.addGeoDVs = True
     args.sweep = True
     args.addStructDVs = True
+    args.includeBFL = True
+    args.useFuelMassDVs = True
 
 # If we are doing a trim task then we should disable the structural and geometric design variables
 if args.task == "trim":
@@ -1235,7 +1237,7 @@ for output in flightPointProbOutputs:
             if fnmatch.fnmatch(output, pattern):
                 dispFuncs.append(output)
     patterns = [
-        "planformValues.*",  # WimpressCalc outputs
+        "PlanformValues.*",  # WimpressCalc outputs
         "*SectionToC",  # Section t/c values
         "*aero_post.c*",  # aero coefficients
         "*correctedDrag",  # Corrected drag values
@@ -1378,6 +1380,9 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
     if writeSolution and not args.noFiles:
         writeAeroStructSolution()
+
+    if ptRank == 0:
+        pp(funcSens)
 
     return funcSens
 
@@ -1524,6 +1529,7 @@ if args.task == "derivCheck":
     # Define some groups of design variables
     structDesignVariables = ["dv_struct"] if args.addStructDVs else []
     aeroDesignVariables = [dvName for dvName in designVariables if "_AOA" in dvName]
+    fuelDesignVariables = [dvName for dvName in designVariables if "-fuelMass" in dvName]
     geoDesignVariables = []
     geoInputs = ptComm.bcast(flightPointProb.model.geometry.list_inputs(out_stream=None), root=0)
     for dvName in designVariables:
@@ -1532,18 +1538,22 @@ if args.task == "derivCheck":
                 geoDesignVariables.append(dvName)
                 break
     np.set_printoptions(precision=16, linewidth=200)
-    wrt = geoDesignVariables + aeroDesignVariables  # + ["dv_struct"]
+    wrt = geoDesignVariables + aeroDesignVariables + fuelDesignVariables  # + ["dv_struct"]
     fpName = localFlightPoint.name
     of = [
         f"{fpName}.aero_post.cl",
         f"{fpName}.aero_post.cd",
         f"{fpName}.compliance",
         f"{fpName}.l_skin_ksFailure",
+        "takeoff.rotate.range_final",
+        "PlanformValues.QCSweep",
+        "geometry.x_wimpress"
     ]
     of = [f for f in of if f in flightPointProbOutputs]
     origDVs = {}
     for variable in wrt:
         origDVs[variable] = flightPointProb.get_val(variable)
+
     with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.pkl"), "wb") as pickleFile:
         with open(
             os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"),
@@ -1557,7 +1567,7 @@ if args.task == "derivCheck":
                 method="cs" if isComplex else "fd",
                 form="central",
                 step=1e-200 if isComplex else 1e-3,
-                step_calc="abs",
+                step_calc="rel",
                 out_stream=textFile,
                 compact_print=True,
                 rel_err_tol=1e-8 if isComplex else 1e-2,
@@ -1616,6 +1626,7 @@ if args.task == "rawPolar":
             fileName=f"Alpha-{alphaIndex}-Outputs",
         )
 
+sol = ""
 if args.task in ["check", "opt", "trim"]:
     # ==============================================================================
     # Setup optimization problem
@@ -1896,3 +1907,6 @@ om.n2(
     show_browser=False,
     outfile=os.path.join(outputDir, "Performance-N2-Post-Run.html"),
 )
+
+if globalRank == 0:
+    print(sol)
