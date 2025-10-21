@@ -263,7 +263,7 @@ def setupDVGeo(
     projectionDir[verticalIndex] = 1.0
 
     LECoords = wingGeometry["wing"]["LECoords"]
-    LECoords[:, chordIndex] += 2e-2  # Need to be slightly behind the LE
+    LECoords[:, chordIndex] += 1e-2  # Need to be slightly behind the LE
     LECoords[0, spanIndex] += 1e-4  # Need to be in from the symmetry plane
     LECoords[-1, spanIndex] -= 1e-2  # Need to be in from the tip
 
@@ -364,17 +364,14 @@ def setupDVGeo(
     if addGeoConstraints:
         if args.shape:
             # --- Leading edge radius constraint ---
-            try:  # This fails on the super coarse mesh so we'll just ignore it
-                DVGeoComp.nom_addLERadiusConstraints(
-                    "LERadius",
-                    LECoords,
-                    nSpan=20,
-                    axis=projectionDir,
-                    chordDir=chordDir,
-                )
-                top.add_constraint(f"{geoCompName}.LERadius", lower=0.9)
-            except Exception:
-                pass
+            DVGeoComp.nom_addLERadiusConstraints(
+                "LERadius",
+                LECoords,
+                nSpan=20,
+                axis=projectionDir,
+                chordDir=chordDir,
+            )
+            top.add_constraint(f"{geoCompName}.LERadius", lower=0.9)
 
             # --- Thickness constraints ---
             # We will add two forms of thickness constraints here:

@@ -117,7 +117,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="trim",
+    default="derivCheck",
     choices=[
         "writeJigShape",
         "check",
@@ -1547,7 +1547,6 @@ if args.task == "derivCheck":
         f"{fpName}.l_skin_ksFailure",
         "takeoff.rotate.range_final",
         "PlanformValues.QCSweep",
-        "geometry.x_wimpress"
     ]
     of = [f for f in of if f in flightPointProbOutputs]
     origDVs = {}
