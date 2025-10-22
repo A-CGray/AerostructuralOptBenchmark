@@ -162,7 +162,7 @@ parser.add_argument("--rangeScale", type=float, default=1.0, help="Factor to sca
 parser.add_argument(
     "--maxWingLoading",
     type=float,
-    default=600.0,
+    default=aircraftSpecs["maxWingLoading"],
     help="Maximum allowable wing loading (kg/m^2)",
 )
 parser.add_argument(
@@ -170,6 +170,12 @@ parser.add_argument(
     action="store_true",
     help="Include the balanced field length constraint",
     default=False,
+)
+parser.add_argument(
+    "--maxBFL",
+    type=float,
+    default=aircraftSpecs["maxBFL"],
+    help="Maximum allowable balanced field length (m)",
 )
 parser.add_argument(
     "--optType",
@@ -1052,8 +1058,8 @@ if args.task != "trim":
     if isCruisePoint and args.includeBFL:
         flightPointProb.model.add_constraint(
             "takeoff.rotate.range_final",
-            upper=aircraftSpecs["maxBFL"],
-            scaler=1.0 / aircraftSpecs["maxBFL"],
+            upper=args.maxBFL,
+            scaler=1.0 / args.maxBFL,
             cache_linear_solution=True,
         )
 
