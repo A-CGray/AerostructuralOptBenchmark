@@ -94,7 +94,7 @@ from geometry.wingGeometry import wingGeometry  # noqa: E402
 # --- Get the start time, this is used later for correcting the time limit passed to the optimiser ---
 startTime = time.time()
 
-np.set_printoptions(linewidth=800)
+np.set_printoptions(precision=16, linewidth=800)
 
 
 # --- Get some info on the wing geometry ---
@@ -967,96 +967,95 @@ performanceProb.model = performanceCalc.FuelAndMassConstraintGroup(
     includeFuelVolumeConstraint=includeFuelVolumeConstraint,
 )
 
-if args.task in ["trim", "opt", "check"]:
-    # ==============================================================================
-    # Setup objective
-    # ==============================================================================
-    if structOnlyOpt or args.task == "trim":
-        if ptID == 0:
-            # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
-            # just satisfies the trim constraints
-            flightPointProb.model.add_objective(
-                f"{localFlightPoint.name}.mass", scaler=1e-3, cache_linear_solution=True
-            )
-    elif args.optType == "fuelburn":
-        if isCruisePoint:
-            flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
+# ==============================================================================
+# Setup objective
+# ==============================================================================
+if structOnlyOpt or args.task == "trim":
+    if ptID == 0:
+        # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
+        # just satisfies the trim constraints
+        flightPointProb.model.add_objective(
+            f"{localFlightPoint.name}.mass", scaler=1e-3, cache_linear_solution=True
+        )
+elif args.optType == "fuelburn":
+    if isCruisePoint:
+        flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
 
-    # ==============================================================================
-    # Setup constraints
-    # ==============================================================================
+# ==============================================================================
+# Setup constraints
+# ==============================================================================
 
-    # --- Lift constraints ---
-    # We have a lift=mass*g*loadFactor constraint for each aerostructural flight point. These should be enforced in both
-    # the trim and opt tasks.
+# --- Lift constraints ---
+# We have a lift=mass*g*loadFactor constraint for each aerostructural flight point. These should be enforced in both
+# the trim and opt tasks.
 
-    # Generally, massively scaling down the lift difference helps the optimiser make better progress, but in the trim
-    # task, where all we care about is hitting the lift constraints, we won't scale them down quite as much so that we
-    # really nail the right lift value.
-    liftConScale = 1e-6 if args.task == "trim" else 1e-8
+# Generally, massively scaling down the lift difference helps the optimiser make better progress, but in the trim
+# task, where all we care about is hitting the lift constraints, we won't scale them down quite as much so that we
+# really nail the right lift value.
+liftConScale = 1e-6 if args.task == "trim" else 1e-8
+for fp in flightPoints:
+    if isinstance(fp, FlightPoint):
+        performanceProb.model.add_constraint(
+            f"{fp.name}LiftDiff",
+            equals=0.0,
+            scaler=liftConScale,
+            cache_linear_solution=True,
+        )
+
+# --- Fuel mass consistency constraints ---
+# These constraints ensure that the design variable that controls the magnitude of the fuel mass loads is consistent
+# with this flight point's correct fuel mass, which depends on the computed mission fuel burn and the mass
+# configuration at this flight point. We include these in both opt and trim tasks if the we are using the fuel mass
+# DVs and there is a cruise point to compute the fuel burn.
+if includeFuelMassConstraints:
     for fp in flightPoints:
-        if isinstance(fp, FlightPoint):
-            performanceProb.model.add_constraint(
-                f"{fp.name}LiftDiff",
-                equals=0.0,
-                scaler=liftConScale,
-                cache_linear_solution=True,
-            )
+        performanceProb.model.add_constraint(
+            f"{fp.name}FuelMassDiff",
+            equals=0.0,
+            scaler=liftConScale,
+            cache_linear_solution=True,
+        )
 
-    # --- Fuel mass consistency constraints ---
-    # These constraints ensure that the design variable that controls the magnitude of the fuel mass loads is consistent
-    # with this flight point's correct fuel mass, which depends on the computed mission fuel burn and the mass
-    # configuration at this flight point. We include these in both opt and trim tasks if the we are using the fuel mass
-    # DVs and there is a cruise point to compute the fuel burn.
-    if includeFuelMassConstraints:
-        for fp in flightPoints:
-            performanceProb.model.add_constraint(
-                f"{fp.name}FuelMassDiff",
-                equals=0.0,
-                scaler=liftConScale,
-                cache_linear_solution=True,
-            )
+if args.task != "trim":
+    # --- TACS Failure constraints ---
+    # These should be included in all opt tasks
+    if localFlightPoint.failureGroups is not None:
+        for group in localFlightPoint.failureGroups:
+            failureConName = f"{localFlightPoint.name}.{group}_ksFailure"
+            flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
 
-    if args.task in ["opt", "check"]:
-        # --- TACS Failure constraints ---
-        # These should be included in all opt tasks
-        if localFlightPoint.failureGroups is not None:
-            for group in localFlightPoint.failureGroups:
-                failureConName = f"{localFlightPoint.name}.{group}_ksFailure"
-                flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
-
-        if not structOnlyOpt and args.addGeoDVs:
-            # --- Fuel tank capacity constraint ---
-            # We only apply this if we have a cruise point to compute the fuel burn and if we have geometric DVs that
-            # will affect the fuel tank volume
-            if includeFuelVolumeConstraint:
-                performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
-            # --- Wing loading constraint ---
-            if ptID == 0 and (args.span or args.taper):
-                # This constraint should only be applied if the optimiser has control over the wing planform
-                flightPointProb.model.add_constraint(
-                    "wingLoading",
-                    upper=args.maxWingLoading,
-                    scaler=1.0 / args.maxWingLoading,
-                    cache_linear_solution=True,
-                )
-        # --- Buffet constraints ---
-        if "buffet" in localFlightPoint.name.lower():
+    if not structOnlyOpt and args.addGeoDVs:
+        # --- Fuel tank capacity constraint ---
+        # We only apply this if we have a cruise point to compute the fuel burn and if we have geometric DVs that
+        # will affect the fuel tank volume
+        if includeFuelVolumeConstraint:
+            performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
+        # --- Wing loading constraint ---
+        if ptID == 0 and (args.span or args.taper):
+            # This constraint should only be applied if the optimiser has control over the wing planform
             flightPointProb.model.add_constraint(
-                f"{localFlightPoint.name}BuffetCon",
-                upper=0.0,
-                scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"]),
+                "wingLoading",
+                upper=args.maxWingLoading,
+                scaler=1.0 / args.maxWingLoading,
                 cache_linear_solution=True,
             )
-        # --- Balanced field length constraint ---
-        # This should only be applied if the flight point is a cruise point and the balanced field
-        if isCruisePoint and args.includeBFL:
-            flightPointProb.model.add_constraint(
-                "takeoff.rotate.range_final",
-                upper=aircraftSpecs["maxBFL"],
-                scaler=1.0 / aircraftSpecs["maxBFL"],
-                cache_linear_solution=True,
-            )
+    # --- Buffet constraints ---
+    if "buffet" in localFlightPoint.name.lower():
+        flightPointProb.model.add_constraint(
+            f"{localFlightPoint.name}BuffetCon",
+            upper=0.0,
+            scaler=1 / (0.04 * wingGeometry["wing"]["planformArea"]),
+            cache_linear_solution=True,
+        )
+    # --- Balanced field length constraint ---
+    # This should only be applied if the flight point is a cruise point and the balanced field
+    if isCruisePoint and args.includeBFL:
+        flightPointProb.model.add_constraint(
+            "takeoff.rotate.range_final",
+            upper=aircraftSpecs["maxBFL"],
+            scaler=1.0 / aircraftSpecs["maxBFL"],
+            cache_linear_solution=True,
+        )
 
 
 # ==============================================================================
@@ -1537,17 +1536,17 @@ if args.task == "derivCheck":
             if geoInput[0] in dvName:
                 geoDesignVariables.append(dvName)
                 break
-    np.set_printoptions(precision=16, linewidth=200)
     wrt = geoDesignVariables + aeroDesignVariables + fuelDesignVariables  # + ["dv_struct"]
     fpName = localFlightPoint.name
-    of = [
-        f"{fpName}.aero_post.cl",
-        f"{fpName}.aero_post.cd",
-        f"{fpName}.compliance",
-        f"{fpName}.l_skin_ksFailure",
-        "takeoff.rotate.range_final",
-        "PlanformValues.QCSweep",
-    ]
+    # of = [
+        # f"{fpName}.aero_post.cl",
+        # f"{fpName}.aero_post.cd",
+        # f"{fpName}.compliance",
+        # f"{fpName}.l_skin_ksFailure",
+        # "takeoff.rotate.range_final",
+        # "PlanformValues.QCSweep",
+    # ]
+    of = gradFuncs
     of = [f for f in of if f in flightPointProbOutputs]
     origDVs = {}
     for variable in wrt:
@@ -1566,11 +1565,11 @@ if args.task == "derivCheck":
                 method="cs" if isComplex else "fd",
                 form="central",
                 step=1e-200 if isComplex else 1e-3,
-                step_calc="rel",
+                step_calc="abs",
                 out_stream=textFile,
                 compact_print=True,
                 rel_err_tol=1e-8 if isComplex else 1e-2,
-                abs_err_tol=1e6,
+                abs_err_tol=1e-8,
             )
             for variable in wrt:
                 flightPointProb.set_val(variable, origDVs[variable])
@@ -1588,7 +1587,7 @@ if args.task == "derivCheck":
                     out_stream=textFile,
                     compact_print=True,
                     rel_err_tol=1e-8 if isComplex else 1e-2,
-                    abs_err_tol=1e6,
+                    abs_err_tol=1e-8,
                     directional=True,
                 )
             )
