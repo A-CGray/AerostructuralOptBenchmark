@@ -1018,7 +1018,7 @@ if includeFuelMassConstraints:
         performanceProb.model.add_constraint(
             f"{fp.name}FuelMassDiff",
             equals=0.0,
-            scaler=liftConScale,
+            scaler=1e-4,
             cache_linear_solution=True,
         )
 
