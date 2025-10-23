@@ -220,11 +220,12 @@ class STWTakeoffAnalysisGroup(om.Group):
         self.nonlinear_solver = om.NewtonSolver(
             iprint=2,
             solve_subsystems=True,
-            maxiter=20,
+            maxiter=40,
             err_on_non_converge=True,
             reraise_child_analysiserror=True,
             restart_from_successful=True,
         )
+        self.nonlinear_solver.linesearch = om.ArmijoGoldsteinLS(maxiter=10, alpha=1.0, c=1e-4, rho=0.9, iprint=2)
         self.linear_solver = om.DirectSolver()
 
     def guess_nonlinear(self, inputs, outputs, residuals):
