@@ -300,7 +300,17 @@ if __name__ == "__main__":
     #     pass  # Not using the ODE transition method
 
     # Set an initial guess for the takeoff flap setting away from te upper bound
-    prob.set_val("ac|aero|takeoff_flap_deg", 10.0, units="deg")
+    prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
+
+    prob.set_val("ac|geom|wing|S_ref", 46.1274)
+    prob.set_val("ac|geom|wing|AR", 8.48926)
+    prob.set_val("ac|geom|wing|c4sweep", np.deg2rad(25.4682))
+    prob.set_val("ac|geom|wing|taper", 0.309707)
+    prob.set_val("ac|geom|wing|toverc", 0.0997442)
+    prob.set_val("ac|weights|MTOW", 57055.8)
+
+    prob.run_model()
+    exit(0)
 
     prob.run_driver()
 
