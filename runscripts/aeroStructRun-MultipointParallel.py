@@ -1365,7 +1365,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
     funcSens = {}
     if len(gradFuncs) != 0:
-        openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict", debug_print=True)
+        openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict")
         for of, sens in openMDAOTotals.items():
             ofName = getPromName(flightPointProb.model, of)
             funcSens[ofName] = {}
