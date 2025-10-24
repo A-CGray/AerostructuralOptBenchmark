@@ -182,6 +182,7 @@ class STWTakeoffAnalysisGroup(om.Group):
             allow_none=True,
             desc="List of variables to exclude from the indepvarcomp. Use this for variables that will instead come from the outputs of other components.",
         )
+        self.options.declare("transition_method", values=["ode", "simplified"], default="ode")
         self.callCounter = 0
 
     def setup(self):
@@ -211,7 +212,9 @@ class STWTakeoffAnalysisGroup(om.Group):
 
         self.add_subsystem(
             "analysis",
-            TakeoffAnalysis(num_nodes=nn, aircraft_model=STWAircraftModel, transition_method="ode"),
+            TakeoffAnalysis(
+                num_nodes=nn, aircraft_model=STWAircraftModel, transition_method=self.options["transition_method"]
+            ),
             promotes_inputs=["*"],
             promotes_outputs=["*"],
         )
@@ -220,7 +223,7 @@ class STWTakeoffAnalysisGroup(om.Group):
         self.nonlinear_solver = om.NewtonSolver(
             iprint=2,
             solve_subsystems=True,
-            maxiter=40,
+            maxiter=100,
             err_on_non_converge=True,
             reraise_child_analysiserror=True,
             restart_from_successful=True,
@@ -232,14 +235,17 @@ class STWTakeoffAnalysisGroup(om.Group):
         if self.callCounter == 0:
             nn = self.options["num_nodes"]
             knTomps = 0.514444  # Conversion factor from knots to m/s
+            v0Guess = 1.0 * knTomps
+            v1Guess = 120.0 * knTomps
+            vrGuess = 140.0 * knTomps
             # Initial guesses for takeoff speeds to help with convergence
-            outputs["v0v1.fltcond|Utrue"][:] = np.linspace(1.0, 140.0, nn) * knTomps
-            outputs["v1vr.fltcond|Utrue"][:] = np.linspace(140.0, 150.0, nn) * knTomps
-            outputs["v1v0.fltcond|Utrue"][:] = np.linspace(140.0, 1.0, nn) * knTomps
+            outputs["v0v1.fltcond|Utrue"][:] = np.linspace(v0Guess, v1Guess, nn)
+            outputs["v1vr.fltcond|Utrue"][:] = np.linspace(v1Guess, vrGuess, nn)
+            outputs["v1v0.fltcond|Utrue"][:] = np.linspace(vrGuess, v0Guess, nn)
 
             # Need these if using ODE transition method
             try:
-                outputs["rotate.fltcond|Utrue"][:] = np.linspace(100.0, 100.0, nn) * knTomps
+                outputs["rotate.fltcond|Utrue"][:] = np.linspace(v1Guess, v1Guess, nn)
                 outputs["rotate.accel_vert"][:] = np.linspace(0.05, 1.0, nn)
             except KeyError:
                 pass  # Not using the ODE transition method
@@ -270,7 +276,7 @@ if __name__ == "__main__":
     # - "ac|geom|wing|taper"
     # - "ac|geom|wing|toverc"
     # - "ac|weights|MTOW"
-    prob.model = STWTakeoffAnalysisGroup(num_nodes=numNodes, ivc_excludes=["ac|weights|MTOW"])
+    prob.model = STWTakeoffAnalysisGroup(num_nodes=numNodes, ivc_excludes=["ac|weights|MTOW"], transition_method="ode")
 
     prob.driver = om.ScipyOptimizeDriver()
     prob.driver.options["optimizer"] = "SLSQP"
@@ -279,7 +285,7 @@ if __name__ == "__main__":
     prob.model.add_design_var("ac|aero|takeoff_flap_deg", lower=0, upper=20, units="deg")
     prob.model.add_objective("bfl.distance_continue", scaler=1e-3, units="ft")  # Minimize balanced field length
 
-    prob.setup()
+    prob.setup(force_alloc_complex=True)
     prob.final_setup()
 
     # NOTE: It looks like there are some issues with the OpenConcept takeoff model not converting properly between true
@@ -303,7 +309,7 @@ if __name__ == "__main__":
     # Set an initial guess for the takeoff flap setting away from te upper bound
     prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
 
-    prob.set_val("ac|geom|wing|S_ref", 46.1274)
+    prob.set_val("ac|geom|wing|S_ref", 2 * 46.1274)
     prob.set_val("ac|geom|wing|AR", 8.48926)
     prob.set_val("ac|geom|wing|c4sweep", np.deg2rad(25.4682))
     prob.set_val("ac|geom|wing|taper", 0.309707)
@@ -311,11 +317,21 @@ if __name__ == "__main__":
     prob.set_val("ac|weights|MTOW", 57055.8)
 
     prob.run_model()
-    exit(0)
+    of = ["bfl.distance_continue", "bfl.distance_abort"]
+    wrt = [
+        "ac|geom|wing|S_ref",
+        "ac|geom|wing|AR",
+        "ac|geom|wing|c4sweep",
+        "ac|geom|wing|taper",
+        "ac|geom|wing|toverc",
+        "ac|weights|MTOW",
+    ]
+    prob.check_totals(of=of, wrt=wrt, step=1e-100, method="cs", compact_print=True, step_calc="abs")
 
-    prob.run_driver()
+    # prob.run_driver()
 
-    prob.run_model()
+    # prob.run_model()
+
     om.n2(prob, show_browser=False, outfile="takeoff_analysis_n2.html")
 
     # =============== Print some useful outputs ================
@@ -323,7 +339,12 @@ if __name__ == "__main__":
         {"var": "ac|weights|MTOW", "name": "MTOW", "units": "kg"},
         {
             "var": "bfl.distance_continue",
-            "name": "Balanced field length",
+            "name": "Balanced field takeoff length",
+            "units": "ft",
+        },
+        {
+            "var": "bfl.distance_abort",
+            "name": "Balanced field abort length",
             "units": "ft",
         },
         {"var": "takeoff|v1", "name": "V1 speed", "units": "kn"},
@@ -364,7 +385,7 @@ if __name__ == "__main__":
 
     # Label the start, decision and end points on the x axis
     xTicks = [0]
-    for phase in ["v0v1", "rotate"]:
+    for phase in ["v0v1", "rotate", "v1v0"]:
         xTicks.append(prob.get_val(f"{phase}.range", units="ft")[-1])
     for ax in takeoff_axs:
         ax.set_xticks(xTicks)

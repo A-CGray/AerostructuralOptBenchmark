@@ -981,9 +981,7 @@ if structOnlyOpt or args.task == "trim":
     if ptID == 0:
         # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
         # just satisfies the trim constraints
-        flightPointProb.model.add_objective(
-            f"{localFlightPoint.name}.mass", scaler=1e-3, cache_linear_solution=True
-        )
+        flightPointProb.model.add_objective(f"{localFlightPoint.name}.mass", scaler=1e-3, cache_linear_solution=True)
 elif args.optType == "fuelburn":
     if isCruisePoint:
         flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
@@ -1058,7 +1056,7 @@ if args.task != "trim":
     # This should only be applied if the flight point is a cruise point and the balanced field
     if isCruisePoint and args.includeBFL:
         flightPointProb.model.add_constraint(
-            "takeoff.rotate.range_final",
+            "takeoff.bfl.distance_continue",
             upper=args.maxBFL,
             scaler=1.0 / args.maxBFL,
             cache_linear_solution=True,
@@ -1265,6 +1263,7 @@ for output in flightPointProbOutputs:
         "avgToC",  # Average wing t/c
         "*CLmax_*",  # CLmax values (clean and flapped)
         "*takeoff|v*",  # Takeoff speeds
+        "*takeoff.bfl.*",  # Balanced field length speeds and distances
         "*ksFailure",  # TACS failure values
     ]
     for pattern in patterns:
@@ -1448,7 +1447,9 @@ MP.setObjCon(objCon)
 # Create wrapped functions to be used by multipoint sparse
 # ==============================================================================
 def procSetObj(x=None):
-    return runAeroStructAnalyses(x, evalFuncs=gradFuncs if args.task == "derivCheck" else dispFuncs, writeSolution=args.task != "opt")
+    return runAeroStructAnalyses(
+        x, evalFuncs=gradFuncs if args.task == "derivCheck" else dispFuncs, writeSolution=args.task != "opt"
+    )
 
 
 MP.addProcSetObjFunc("all", procSetObj)
@@ -1823,7 +1824,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                     dill.dump(restartDict, f)
 
     elif args.task == "derivCheck":
-
         rng = np.random.default_rng(12345)
 
         # Check derivatives of all objectives and constraints with respect to all design variables
@@ -1835,9 +1835,9 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
 
         # FD settings
         stepSize = 1e-4
-        directionalThreshold = 3 # If a DV has a length greater than this we will test the directional derivative only
+        directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
 
-        fdSens= {}
+        fdSens = {}
         for func in origFuncs:
             fdSens[func] = {}
 
@@ -1865,11 +1865,11 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                 pertDVs[dvName] += dvPert
 
                 pertFuncs, _ = obj(pertDVs)
-                pertDVs[dvName] -= 2*dvPert
+                pertDVs[dvName] -= 2 * dvPert
                 pertFuncs2, _ = obj(pertDVs)
 
                 for func in origFuncs:
-                    fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2*stepSize)
+                    fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
             else:
                 for ii in range(numDV):
                     if ptRank == 0:
@@ -1879,11 +1879,11 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                     pertDVs[dvName][ii] += dvPert
 
                     pertFuncs, _ = obj(pertDVs)
-                    pertDVs[dvName][ii] -= 2*dvPert
+                    pertDVs[dvName][ii] -= 2 * dvPert
                     pertFuncs2, _ = obj(pertDVs)
 
                     for func in origFuncs:
-                        fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2*dvPert)
+                        fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
 
         derivCheckData = {}
         for func in origFuncs:
@@ -1911,7 +1911,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                     "fd": fd,
                 }
                 if analytic.shape != fd.shape:
-                    analyticSensProd = analytic @ (1/dvScales[dvName])
+                    analyticSensProd = analytic @ (1 / dvScales[dvName])
                     derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
                     absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
                     relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
@@ -1944,75 +1944,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
             rel_err_tol=1e-8 if isComplex else 1e-2,
             abs_err_tol=1e-8,
         )
-
-
-        # Define some groups of design variables
-        # structDesignVariables = ["dv_struct"] if args.addStructDVs else []
-        # aeroDesignVariables = [dvName for dvName in designVariables if "_AOA" in dvName]
-        # fuelDesignVariables = [dvName for dvName in designVariables if "-fuelMass" in dvName]
-        # geoDesignVariables = []
-        # geoInputs = ptComm.bcast(flightPointProb.model.geometry.list_inputs(out_stream=None), root=0)
-        # for dvName in designVariables:
-        #     for geoInput in geoInputs:
-        #         if geoInput[0] in dvName:
-        #             geoDesignVariables.append(dvName)
-        #             break
-        # wrt = geoDesignVariables + aeroDesignVariables + fuelDesignVariables  # + ["dv_struct"]
-        # fpName = localFlightPoint.name
-        # # of = [
-        #     # f"{fpName}.aero_post.cl",
-        #     # f"{fpName}.aero_post.cd",
-        #     # f"{fpName}.compliance",
-        #     # f"{fpName}.l_skin_ksFailure",
-        #     # "takeoff.rotate.range_final",
-        #     # "PlanformValues.QCSweep",
-        # # ]
-        # of = gradFuncs
-        # of = [f for f in of if f in flightPointProbOutputs]
-        # origDVs = {}
-        # for variable in wrt:
-        #     origDVs[variable] = flightPointProb.get_val(variable)
-
-        # with open(os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.pkl"), "wb") as pickleFile:
-        #     with open(
-        #         os.path.join(localOutputDir, f"{fpName}-derivCheck-{ptRank:03d}.txt"),
-        #         "w",
-        #     ) as textFile:
-        #         if ptRank == 0:
-        #             print(f"Testing derivatives of {of}, with respect to {wrt}", flush=True)
-        #         totalsCheckData = flightPointProb.check_totals(
-        #             of=of,
-        #             wrt=wrt,
-        #             method="cs" if isComplex else "fd",
-        #             form="central",
-        #             step=1e-200 if isComplex else 1e-3,
-        #             step_calc="abs",
-        #             out_stream=textFile,
-        #             compact_print=True,
-        #             rel_err_tol=1e-8 if isComplex else 1e-2,
-        #             abs_err_tol=1e-8,
-        #         )
-        #         for variable in wrt:
-        #             flightPointProb.set_val(variable, origDVs[variable])
-        #         flightPointProb.run_model()
-        #         if ptRank == 0:
-        #             print(f"Testing derivatives of {of}, with respect to dv_struct", flush=True)
-        #         totalsCheckData.update(
-        #             flightPointProb.check_totals(
-        #                 of=of,
-        #                 wrt=["dv_struct"],
-        #                 method="cs" if isComplex else "fd",
-        #                 form="central",
-        #                 step=1e-200 if isComplex else 1e-5,
-        #                 step_calc="rel",
-        #                 out_stream=textFile,
-        #                 compact_print=True,
-        #                 rel_err_tol=1e-8 if isComplex else 1e-2,
-        #                 abs_err_tol=1e-8,
-        #                 directional=True,
-        #             )
-        #         )
-        #     dill.dump(totalsCheckData, pickleFile, protocol=-1)
 
 # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
 outputs = flightPointProb.model.list_outputs(
