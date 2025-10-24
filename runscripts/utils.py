@@ -593,7 +593,7 @@ def setupFuelMassGroup(model, fuelDVName, numRibBays):
             aircraftSpecs=aircraftSpecs,
             numRibBays=numRibBays,
             volumeVarName="RibBay-Volume",
-            maxSmoothingRelError=1e-3,
+            maxSmoothingRelError=1e-2,
         ),
         promotes_inputs=["*", ("fuelMass", fuelDVName)],
         promotes_outputs=["*"],
