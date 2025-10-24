@@ -173,6 +173,12 @@ parser.add_argument(
     default=False,
 )
 parser.add_argument(
+    "--useSimpleBFL",
+    action="store_true",
+    help="Use the simplified rotation phase in the OpenConcept BFL calculation",
+    default=False,
+)
+parser.add_argument(
     "--maxBFL",
     type=float,
     default=aircraftSpecs["maxBFL"],
@@ -835,7 +841,8 @@ class AnalysisPoint(Multipoint):
                             "ac|geom|wing|c4sweep",
                             "ac|geom|wing|taper",
                             "ac|geom|wing|toverc",
-                        ]
+                        ],
+                        transition_method="simplified" if args.useSimpleBFL else "ode",
                     )
                     self.add_subsystem("takeoff", takeoffGroup)
                     self.connect("takeoffMass", "takeoff.ac|weights|MTOW")
