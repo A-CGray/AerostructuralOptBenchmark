@@ -512,90 +512,56 @@ def setupConstraints(scenario_name, fea_assembler, constraints, args):
     # Add constraints between the DV's on each panel
     dvCon = fea_assembler.createDVConstraint("DVCon")
 
-    if args.oldSizingRules:
-        # Limit the difference in thickness between the panel and stiffener
-        # -thickDiffMax <= panelThickness - stiffenerThickness <= thickDiffMax
-        dvCon.addConstraint(
-            conName="thickDiffLimit",
-            lower=-2.5,
-            upper=2.5,
-            dvIndices=[DVNums["panelThickness"], DVNums["stiffenerThickness"]],
-            dvWeights=[1.0, -1.0],
-        )
-        # Limit the aspect ratio of the stiffener
-        # stiffenerHeight - stiffAspectMax * stiffenerThickness <= 0
-        dvCon.addConstraint(
-            conName="stiffenerAspectMax",
-            upper=0.0,
-            dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
-            dvWeights=[1.0, -stiffAspectMax],
-        )
-        # stiffenerHeight - stiffAspectMin * stiffenerThickness >= 0
-        dvCon.addConstraint(
-            conName="stiffenerAspectMin",
-            lower=0.0,
-            dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
-            dvWeights=[1.0, -stiffAspectMin],
-        )
-        # Ensure there is space between the stiffeners
-        # 2*flangeFraction - stiffenerPitch <= 0
+    # Flange thickness should be at least 1.5x skin thickness to reduce stress concentrations at the flange-skin
+    # interface, but no more than 15x skin thickness
+    # dvCon.addConstraint(
+    #     conName="flangeThicknessMin",
+    #     lower=0.0,
+    #     dvIndices=[DVNums["panelThickness"], DVNums["stiffenerThickness"]],
+    #     dvWeights=[-1.5, 1.0],
+    # )
+    dvCon.addConstraint(
+        conName="flangeThicknessMax",
+        upper=0.0,
+        dvIndices=[DVNums["panelThickness"], DVNums["stiffenerThickness"]],
+        dvWeights=[-15.0, 1.0],
+    )
+
+    # Limit the aspect ratio of the stiffener
+    # stiffenerHeight - stiffAspectMax * stiffenerThickness <= 0
+    dvCon.addConstraint(
+        conName="stiffenerAspectMax",
+        upper=0.0,
+        dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
+        dvWeights=[1.0, -stiffAspectMax],
+    )
+    # stiffenerHeight - stiffAspectMin * stiffenerThickness >= 0
+    dvCon.addConstraint(
+        conName="stiffenerAspectMin",
+        lower=0.0,
+        dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
+        dvWeights=[1.0, -stiffAspectMin],
+    )
+    # Spacing between stiffeners should be greater than stiffener flange width to avoid overlapping stiffeners
+    # flangeFraction*stiffenerHeight - stiffenerPitch <= 0
+    # NOTE: This constrain is actually not strictly right now necessary because the stiffener height upper bound and
+    # the stiffener pitch lower bound are both 0.15m so the constraint is always satisfied. However, I'm keeping it
+    # enabled for now in case the bounds change in the future.
+    if useStiffenerPitchDVs:
         dvCon.addConstraint(
             conName="stiffSpacingMin",
             upper=0.0,
             dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerPitch"]],
-            dvWeights=[2.0, -1.0],
+            dvWeights=[flangeFraction, -1.0],
         )
     else:
-        # Flange thickness should be at least 1.5x skin thickness to reduce stress concentrations at the flange-skin
-        # interface, but no more than 15x skin thickness
-        # dvCon.addConstraint(
-        #     conName="flangeThicknessMin",
-        #     lower=0.0,
-        #     dvIndices=[DVNums["panelThickness"], DVNums["stiffenerThickness"]],
-        #     dvWeights=[-1.5, 1.0],
-        # )
         dvCon.addConstraint(
-            conName="flangeThicknessMax",
-            upper=0.0,
-            dvIndices=[DVNums["panelThickness"], DVNums["stiffenerThickness"]],
-            dvWeights=[-15.0, 1.0],
+            conName="stiffSpacingMin",
+            upper=defaultStiffenerPitch,
+            dvIndices=[DVNums["stiffenerHeight"]],
+            dvWeights=[flangeFraction],
         )
-
-        # Limit the aspect ratio of the stiffener
-        # stiffenerHeight - stiffAspectMax * stiffenerThickness <= 0
-        dvCon.addConstraint(
-            conName="stiffenerAspectMax",
-            upper=0.0,
-            dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
-            dvWeights=[1.0, -stiffAspectMax],
-        )
-        # stiffenerHeight - stiffAspectMin * stiffenerThickness >= 0
-        dvCon.addConstraint(
-            conName="stiffenerAspectMin",
-            lower=0.0,
-            dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerThickness"]],
-            dvWeights=[1.0, -stiffAspectMin],
-        )
-        # Spacing between stiffeners should be greater than stiffener flange width to avoid overlapping stiffeners
-        # flangeFraction*stiffenerHeight - stiffenerPitch <= 0
-        # NOTE: This constrain is actually not strictly right now necessary because the stiffener height upper bound and
-        # the stiffener pitch lower bound are both 0.15m so the constraint is always satisfied. However, I'm keeping it
-        # enabled for now in case the bounds change in the future.
-        if useStiffenerPitchDVs:
-            dvCon.addConstraint(
-                conName="stiffSpacingMin",
-                upper=0.0,
-                dvIndices=[DVNums["stiffenerHeight"], DVNums["stiffenerPitch"]],
-                dvWeights=[flangeFraction, -1.0],
-            )
-        else:
-            dvCon.addConstraint(
-                conName="stiffSpacingMin",
-                upper=defaultStiffenerPitch,
-                dvIndices=[DVNums["stiffenerHeight"]],
-                dvWeights=[flangeFraction],
-            )
-        constraints.append(dvCon)
+    constraints.append(dvCon)
 
     if usePanelLengthDVs:
         panelLengthCon = fea_assembler.createPanelLengthConstraint("PanelLengthCon")

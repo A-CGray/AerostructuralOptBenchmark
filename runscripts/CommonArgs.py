@@ -112,7 +112,6 @@ parser.add_argument(
 parser.add_argument("--usePlyFractionDVs", action="store_true", help="Enable composite ply fraction DVs")
 parser.add_argument("--structLevel", type=int, default=3, choices=[1, 2, 3, 4])
 parser.add_argument("--structOrder", type=int, default=2, choices=[2, 3, 4])
-parser.add_argument("--oldSizingRules", action="store_true", help="Use old sizing rules")
 parser.add_argument(
     "--thicknessAdjCon",
     type=float,
