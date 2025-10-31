@@ -188,16 +188,10 @@ def element_callback(
     panelLengths=None,
     **kwargs,
 ):
-    if args.oldSizingRules:
-        stiffenerPitchMin = 0.05
-        panelThicknessMin = 2e-3
-        stiffenerHeightMin = 2e-3
-        stiffenerThicknessMin = 2e-3
-    else:
-        stiffenerPitchMin = defaultStiffenerPitchMin
-        panelThicknessMin = defaultPanelThicknessMin
-        stiffenerHeightMin = defaultStiffenerHeightMin
-        stiffenerThicknessMin = defaultStiffenerThicknessMin
+    stiffenerPitchMin = defaultStiffenerPitchMin
+    panelThicknessMin = defaultPanelThicknessMin
+    stiffenerHeightMin = defaultStiffenerHeightMin
+    stiffenerThicknessMin = defaultStiffenerThicknessMin
 
     if useComposite:
         prop = constitutive.MaterialProperties(
@@ -379,10 +373,7 @@ def element_callback(
 def setup_tacs_assembler(fea_assembler, args):
     # Add global DVs for the skin and spar stiffener pitch
     if args.useStiffPitchDVs:
-        if args.oldSizingRules:
-            stiffenerPitchMin = 0.05
-        else:
-            stiffenerPitchMin = defaultStiffenerPitchMin
+        stiffenerPitchMin = defaultStiffenerPitchMin
         for stiffenerGroup in ["u_skin", "l_skin", "le_spar", "te_spar"]:
             fea_assembler.addGlobalDV(
                 f"{stiffenerGroup}_stiffenerPitch",

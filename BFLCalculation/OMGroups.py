@@ -222,6 +222,8 @@ class STWTakeoffAnalysisGroup(om.Group):
         # Set nonlinear and linear solvers for the group
         self.nonlinear_solver = om.NewtonSolver(
             iprint=2,
+            atol=1e-8,
+            rtol=1e-10,
             solve_subsystems=True,
             maxiter=100,
             err_on_non_converge=True,
@@ -237,7 +239,7 @@ class STWTakeoffAnalysisGroup(om.Group):
             knTomps = 0.514444  # Conversion factor from knots to m/s
             v0Guess = 1.0 * knTomps
             v1Guess = 100.0 * knTomps
-            vrGuess = 140.0 * knTomps
+            vrGuess = 120.0 * knTomps
             # Initial guesses for takeoff speeds to help with convergence
             outputs["v0v1.fltcond|Utrue"][:] = np.linspace(v0Guess, v1Guess, nn)
             outputs["v1vr.fltcond|Utrue"][:] = np.linspace(v1Guess, vrGuess, nn)

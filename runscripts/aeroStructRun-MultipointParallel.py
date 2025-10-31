@@ -942,7 +942,15 @@ class AnalysisPoint(Multipoint):
                 rtol=1e-8 * args.tolFactor,
                 maxiter=50,
                 iprint=2,
-                rhs_checking=True,
+                rhs_checking={
+                    "max_cache_entries": 10,
+                    "check_zero": True,
+                    "collect_stats": True,
+                    "auto": True,
+                    "verbose": ptRank == 0,
+                    "atol": 1e-14,
+                    "rtol": 1e-14,
+                },
             )
             scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
 
@@ -1417,7 +1425,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
         for ofName, sens in funcSens.items():
             print(f"Gradients of {ofName}:", flush=True)
             for wrtName, val in sens.items():
-                if val.size < 1000:
+                if val.shape[0] < 100:
                     print(f"  d{ofName}/d{wrtName} = {val}", flush=True)
                 else:
                     print(f"  d{ofName}/d{wrtName} = Too big, not printing", flush=True)
@@ -1844,12 +1852,15 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         origFuncs, _ = obj(origDVs)
         analyticSens, _ = sens(origDVs, origFuncs)
 
+        # Exclude the large outputs (geometric and panel length constraints) from the derivative check, I'm confident they're accurate
+        # outputsToTest = [func for func in origFuncs if len(origFuncs[func]) < 10]
+
         # # FD settings
         # stepSize = 1e-4
         # directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
 
         # fdSens = {}
-        # for func in origFuncs:
+        # for func in outputsToTest:
         #     fdSens[func] = {}
 
         # dvScales = {}
@@ -1862,10 +1873,10 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
 
         #     testDirectional = numDV > directionalThreshold
 
-        #     for func in origFuncs:
-        #         outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
-        #         inpSize = 1 if testDirectional else numDV
-        #         fdSens[func][dvName] = np.zeros((outputSize, inpSize))
+        # for func in outputsToTest:
+        #     outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
+        #     inpSize = 1 if testDirectional else numDV
+        #     fdSens[func][dvName] = np.zeros((outputSize, inpSize))
 
         #     if testDirectional:
         #         if ptRank == 0:
@@ -1879,25 +1890,25 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         #         pertDVs[dvName] -= 2 * dvPert
         #         pertFuncs2, _ = obj(pertDVs)
 
-        #         for func in origFuncs:
-        #             fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
-        #     else:
-        #         for ii in range(numDV):
-        #             if ptRank == 0:
-        #                 print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
-        #             pertDVs = copy.deepcopy(origDVs)
-        #             dvPert = stepSize / dvScales[dvName][ii]
-        #             pertDVs[dvName][ii] += dvPert
+        #     for func in outputsToTest:
+        #         fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
+        # else:
+        #     for ii in range(numDV):
+        #         if ptRank == 0:
+        #             print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
+        #         pertDVs = copy.deepcopy(origDVs)
+        #         dvPert = stepSize / dvScales[dvName][ii]
+        #         pertDVs[dvName][ii] += dvPert
 
         #             pertFuncs, _ = obj(pertDVs)
         #             pertDVs[dvName][ii] -= 2 * dvPert
         #             pertFuncs2, _ = obj(pertDVs)
 
-        #             for func in origFuncs:
+        #             for func in outputsToTest:
         #                 fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
 
         # derivCheckData = {}
-        # for func in origFuncs:
+        # for func in outputsToTest:
         #     derivCheckData[func] = {}
         #     if ptRank == 0:
         #         print(f"\n\nDerivative check for function {func}:", flush=True)
@@ -1941,20 +1952,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         #     with open(outFileName, "wb") as f:
         #         dill.dump(derivCheckData, f, protocol=-1)
 
-        # # Check the flight point OpenMDAO problem's derivatives of the gradFuncs w.r.t the fuel mass DVs to see if that
-        # # is the problem or if it's something related to multipoint
-        # obj(origDVs)
-        # totalsCheckData = flightPointProb.check_totals(
-        #     of=gradFuncs,
-        #     wrt=[f"{localFlightPoint.name}-fuelMass"],
-        #     method="cs" if isComplex else "fd",
-        #     form="central",
-        #     step=1e-200 if isComplex else 1e-3,
-        #     step_calc="rel",
-        #     compact_print=True,
-        #     rel_err_tol=1e-8 if isComplex else 1e-2,
-        #     abs_err_tol=1e-8,
-        # )
 
 # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
 outputs = flightPointProb.model.list_outputs(
