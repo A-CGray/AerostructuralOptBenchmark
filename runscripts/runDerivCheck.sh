@@ -2,7 +2,7 @@
 NCORES=$(wc -l < $PBS_NODEFILE)
 mpiexec -n $NCORES python aeroStructRun-MultipointParallel.py \
 --task derivCheck \
---flightPointSet 2pt \
+--flightPointSet cruise \
 --addStructDVs --useFuelMassDVs --includeBFL \
 --addGeoDVs --sweep --shape --twist \
 --tolFactor 1e-2 \
