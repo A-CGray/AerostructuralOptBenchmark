@@ -17,6 +17,7 @@ import argparse
 parser = argparse.ArgumentParser()
 
 # --- General options ---
+parser.add_argument("--profile", action="store_true", help="Enable profiling")
 parser.add_argument("--output", type=str, default="debug", help="Output directory")
 parser.add_argument(
     "--noFiles",

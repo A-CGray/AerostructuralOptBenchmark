@@ -238,6 +238,12 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+if args.profile:
+    import cProfile
+
+    pr = cProfile.Profile()
+    pr.enable()
+
 # If we're doing a derivative check, we should at least enable some geometric and structural DVs
 if args.task == "derivCheck":
     args.addGeoDVs = True
@@ -2003,3 +2009,7 @@ om.n2(
 
 if globalRank == 0:
     print(sol)
+
+if args.profile:
+    pr.disable()
+    pr.dump_stats(os.path.join(outputDir, f"{os.path.basename(args.output)}_{globalRank:03d}.prof"))
