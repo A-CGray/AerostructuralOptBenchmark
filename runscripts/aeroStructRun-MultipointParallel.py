@@ -29,7 +29,6 @@ import fnmatch
 import sys
 from pprint import pprint as pp
 import time
-import copy
 
 # ==============================================================================
 # External Python modules
@@ -541,6 +540,7 @@ aeroBuilder = ADflowBuilder(
     write_solution=False,
     res_ref=1e7,
     restart_failed_analysis=False,
+    linear_precon_only=False,
 )
 
 
@@ -1392,7 +1392,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
     funcSens = {}
     if len(gradFuncs) != 0:
-        openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict")
+        openMDAOTotals = flightPointProb.compute_totals(of=gradFuncs, return_format="dict", debug_print=ptRank == 0)
         for of, sens in openMDAOTotals.items():
             ofName = getPromName(flightPointProb.model, of)
             funcSens[ofName] = {}
@@ -1837,8 +1837,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                     dill.dump(restartDict, f)
 
     elif args.task == "derivCheck":
-        rng = np.random.default_rng(12345)
-
         # Check derivatives of all objectives and constraints with respect to all design variables
         obj = MP.obj
         sens = MP.sens
@@ -1846,117 +1844,117 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         origFuncs, _ = obj(origDVs)
         analyticSens, _ = sens(origDVs, origFuncs)
 
-        # FD settings
-        stepSize = 1e-4
-        directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
+        # # FD settings
+        # stepSize = 1e-4
+        # directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
 
-        fdSens = {}
-        for func in origFuncs:
-            fdSens[func] = {}
+        # fdSens = {}
+        # for func in origFuncs:
+        #     fdSens[func] = {}
 
-        dvScales = {}
-        for dvName, dvs in optProb.variables.items():
-            numDV = len(dvs)
-            dvScales[dvName] = np.ones(numDV)
-            for ii in range(numDV):
-                if dvs[ii].scale is not None:
-                    dvScales[dvName][ii] = dvs[ii].scale
+        # dvScales = {}
+        # for dvName, dvs in optProb.variables.items():
+        #     numDV = len(dvs)
+        #     dvScales[dvName] = np.ones(numDV)
+        #     for ii in range(numDV):
+        #         if dvs[ii].scale is not None:
+        #             dvScales[dvName][ii] = dvs[ii].scale
 
-            testDirectional = numDV > directionalThreshold
+        #     testDirectional = numDV > directionalThreshold
 
-            for func in origFuncs:
-                outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
-                inpSize = 1 if testDirectional else numDV
-                fdSens[func][dvName] = np.zeros((outputSize, inpSize))
+        #     for func in origFuncs:
+        #         outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
+        #         inpSize = 1 if testDirectional else numDV
+        #         fdSens[func][dvName] = np.zeros((outputSize, inpSize))
 
-            if testDirectional:
-                if ptRank == 0:
-                    print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
-                pertDVs = copy.deepcopy(origDVs)
-                dvPertSize = stepSize / dvScales[dvName]
-                dvPert = stepSize / dvScales[dvName]
-                pertDVs[dvName] += dvPert
+        #     if testDirectional:
+        #         if ptRank == 0:
+        #             print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
+        #         pertDVs = copy.deepcopy(origDVs)
+        #         dvPertSize = stepSize / dvScales[dvName]
+        #         dvPert = stepSize / dvScales[dvName]
+        #         pertDVs[dvName] += dvPert
 
-                pertFuncs, _ = obj(pertDVs)
-                pertDVs[dvName] -= 2 * dvPert
-                pertFuncs2, _ = obj(pertDVs)
+        #         pertFuncs, _ = obj(pertDVs)
+        #         pertDVs[dvName] -= 2 * dvPert
+        #         pertFuncs2, _ = obj(pertDVs)
 
-                for func in origFuncs:
-                    fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
-            else:
-                for ii in range(numDV):
-                    if ptRank == 0:
-                        print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
-                    pertDVs = copy.deepcopy(origDVs)
-                    dvPert = stepSize / dvScales[dvName][ii]
-                    pertDVs[dvName][ii] += dvPert
+        #         for func in origFuncs:
+        #             fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
+        #     else:
+        #         for ii in range(numDV):
+        #             if ptRank == 0:
+        #                 print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
+        #             pertDVs = copy.deepcopy(origDVs)
+        #             dvPert = stepSize / dvScales[dvName][ii]
+        #             pertDVs[dvName][ii] += dvPert
 
-                    pertFuncs, _ = obj(pertDVs)
-                    pertDVs[dvName][ii] -= 2 * dvPert
-                    pertFuncs2, _ = obj(pertDVs)
+        #             pertFuncs, _ = obj(pertDVs)
+        #             pertDVs[dvName][ii] -= 2 * dvPert
+        #             pertFuncs2, _ = obj(pertDVs)
 
-                    for func in origFuncs:
-                        fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
+        #             for func in origFuncs:
+        #                 fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
 
-        derivCheckData = {}
-        for func in origFuncs:
-            derivCheckData[func] = {}
-            if ptRank == 0:
-                print(f"\n\nDerivative check for function {func}:", flush=True)
+        # derivCheckData = {}
+        # for func in origFuncs:
+        #     derivCheckData[func] = {}
+        #     if ptRank == 0:
+        #         print(f"\n\nDerivative check for function {func}:", flush=True)
 
-            if func not in analyticSens:
-                if ptRank == 0:
-                    print(f"  No analytic derivatives found for {func}", flush=True)
-                continue
-            for dvName in fdSens[func]:
-                if ptRank == 0:
-                    print(f"  DV: {dvName}", flush=True)
+        #     if func not in analyticSens:
+        #         if ptRank == 0:
+        #             print(f"  No analytic derivatives found for {func}", flush=True)
+        #         continue
+        #     for dvName in fdSens[func]:
+        #         if ptRank == 0:
+        #             print(f"  DV: {dvName}", flush=True)
 
-                fd = fdSens[func][dvName]
-                if dvName in analyticSens[func]:
-                    analytic = analyticSens[func][dvName]
-                else:
-                    if ptRank == 0:
-                        print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
-                    continue
-                derivCheckData[func][dvName] = {
-                    "analytic": analytic,
-                    "fd": fd,
-                }
-                if analytic.shape != fd.shape:
-                    analyticSensProd = analytic @ (1 / dvScales[dvName])
-                    derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
-                    absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
-                    relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
-                else:
-                    absError = np.abs(analytic - fd)
-                    relError = absError / (np.abs(fd) + 1e-16)
-                derivCheckData[func][dvName]["absError"] = absError
-                derivCheckData[func][dvName]["relError"] = relError
+        #         fd = fdSens[func][dvName]
+        #         if dvName in analyticSens[func]:
+        #             analytic = analyticSens[func][dvName]
+        #         else:
+        #             if ptRank == 0:
+        #                 print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
+        #             continue
+        #         derivCheckData[func][dvName] = {
+        #             "analytic": analytic,
+        #             "fd": fd,
+        #         }
+        #         if analytic.shape != fd.shape:
+        #             analyticSensProd = analytic @ (1 / dvScales[dvName])
+        #             derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
+        #             absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
+        #             relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
+        #         else:
+        #             absError = np.abs(analytic - fd)
+        #             relError = absError / (np.abs(fd) + 1e-16)
+        #         derivCheckData[func][dvName]["absError"] = absError
+        #         derivCheckData[func][dvName]["relError"] = relError
 
-                if ptRank == 0:
-                    for key, val in derivCheckData[func][dvName].items():
-                        print(f"    {key:>25}: {val}", flush=True)
+        #         if ptRank == 0:
+        #             for key, val in derivCheckData[func][dvName].items():
+        #                 print(f"    {key:>25}: {val}", flush=True)
 
-        if globalRank == 0:
-            outFileName = os.path.join(outputDir, "DerivCheck.pkl")
-            with open(outFileName, "wb") as f:
-                dill.dump(derivCheckData, f, protocol=-1)
+        # if globalRank == 0:
+        #     outFileName = os.path.join(outputDir, "DerivCheck.pkl")
+        #     with open(outFileName, "wb") as f:
+        #         dill.dump(derivCheckData, f, protocol=-1)
 
-        # Check the flight point OpenMDAO problem's derivatives of the gradFuncs w.r.t the fuel mass DVs to see if that
-        # is the problem or if it's something related to multipoint
-        obj(origDVs)
-        totalsCheckData = flightPointProb.check_totals(
-            of=gradFuncs,
-            wrt=[f"{localFlightPoint.name}-fuelMass"],
-            method="cs" if isComplex else "fd",
-            form="central",
-            step=1e-200 if isComplex else 1e-3,
-            step_calc="rel",
-            compact_print=True,
-            rel_err_tol=1e-8 if isComplex else 1e-2,
-            abs_err_tol=1e-8,
-        )
+        # # Check the flight point OpenMDAO problem's derivatives of the gradFuncs w.r.t the fuel mass DVs to see if that
+        # # is the problem or if it's something related to multipoint
+        # obj(origDVs)
+        # totalsCheckData = flightPointProb.check_totals(
+        #     of=gradFuncs,
+        #     wrt=[f"{localFlightPoint.name}-fuelMass"],
+        #     method="cs" if isComplex else "fd",
+        #     form="central",
+        #     step=1e-200 if isComplex else 1e-3,
+        #     step_calc="rel",
+        #     compact_print=True,
+        #     rel_err_tol=1e-8 if isComplex else 1e-2,
+        #     abs_err_tol=1e-8,
+        # )
 
 # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
 outputs = flightPointProb.model.list_outputs(
