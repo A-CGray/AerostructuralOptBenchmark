@@ -236,7 +236,7 @@ class STWTakeoffAnalysisGroup(om.Group):
             nn = self.options["num_nodes"]
             knTomps = 0.514444  # Conversion factor from knots to m/s
             v0Guess = 1.0 * knTomps
-            v1Guess = 120.0 * knTomps
+            v1Guess = 100.0 * knTomps
             vrGuess = 140.0 * knTomps
             # Initial guesses for takeoff speeds to help with convergence
             outputs["v0v1.fltcond|Utrue"][:] = np.linspace(v0Guess, v1Guess, nn)
@@ -309,12 +309,12 @@ if __name__ == "__main__":
     # Set an initial guess for the takeoff flap setting away from te upper bound
     prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
 
-    prob.set_val("ac|geom|wing|S_ref", 2 * 46.1274)
-    prob.set_val("ac|geom|wing|AR", 8.48926)
-    prob.set_val("ac|geom|wing|c4sweep", np.deg2rad(25.4682))
-    prob.set_val("ac|geom|wing|taper", 0.309707)
-    prob.set_val("ac|geom|wing|toverc", 0.0997442)
-    prob.set_val("ac|weights|MTOW", 57055.8)
+    prob.set_val("ac|geom|wing|S_ref", 2 * 45.48538689828745)
+    prob.set_val("ac|geom|wing|AR", 8.618152482171348)
+    prob.set_val("ac|geom|wing|c4sweep", np.deg2rad(25.323770790956313))
+    prob.set_val("ac|geom|wing|taper", 0.2999856206927242)
+    prob.set_val("ac|geom|wing|toverc", 0.1027263767954876)
+    prob.set_val("ac|weights|MTOW", 56701.54687557974)
 
     prob.run_model()
     of = ["bfl.distance_continue", "bfl.distance_abort"]
