@@ -87,7 +87,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "adjointL2Convergence": 1e-14,
         "restartAdjoint": True,
         "ADPC": False,
-        "useMatrixFreedrdw": False,  # Uses an aseembled matrix for the adjoint solves, takes some time to build but then each adjoint solve is faster
+        "useMatrixFreedrdw": False,  # Uses an assembled matrix for the adjoint solves, takes some time to build but then each adjoint solve is faster
         "ILUFill": 3,  # Increase from 2 to 3 to get a better preconditioner for the adjoint solves
         # force integration
         "forcesAsTractions": False,  # Because we're using MELD not RLT
