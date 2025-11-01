@@ -248,7 +248,7 @@ if args.task == "derivCheck":
     args.addGeoDVs = True
     args.sweep = True
     args.addStructDVs = True
-    args.includeBFL = True
+    # args.includeBFL = True
     args.useFuelMassDVs = True
 
 # If we are doing a trim task then we should disable the structural and geometric design variables
