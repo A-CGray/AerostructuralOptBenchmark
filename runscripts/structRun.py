@@ -326,7 +326,7 @@ class Top(Multipoint):
 ################################################################################
 # OpenMDAO setup
 ################################################################################
-prob = om.Problem()
+prob = om.Problem(work_dir=outputDir)
 prob.model = Top()
 model = prob.model
 if args.optType.lower() == "mincomp":

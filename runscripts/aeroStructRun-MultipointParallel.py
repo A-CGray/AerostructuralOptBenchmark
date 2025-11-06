@@ -979,11 +979,11 @@ class AnalysisPoint(Multipoint):
 
 
 # --- Now actually create the OpenMDAO model for each point ---
-flightPointProb = om.Problem(reports=None, comm=ptComm)
+flightPointProb = om.Problem(reports=None, comm=ptComm, work_dir=localOutputDir)
 flightPointProb.model = AnalysisPoint()
 
 # --- Finally create the aircraft performance OpenMDAO model ---
-performanceProb = om.Problem(reports=None, comm=globalComm)
+performanceProb = om.Problem(reports=None, comm=globalComm, work_dir=outputDir)
 includeFuelMassConstraints = args.useFuelMassDVs and hasCruisePoint
 includeFuelVolumeConstraint = (
     includeFuelMassConstraints and args.task in ["opt", "check"] and (args.span or args.taper or args.shape)
