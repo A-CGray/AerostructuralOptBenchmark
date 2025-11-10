@@ -88,7 +88,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "restartAdjoint": True,
         "ADPC": False,
         "useMatrixFreedrdw": False,  # Uses an assembled matrix for the adjoint solves, takes some time to build but then each adjoint solve is faster
-        "ILUFill": 3,  # Increase from 2 to 3 to get a better preconditioner for the adjoint solves
+        "ILUFill": 2,  # 2 gave faster coupled adjoint solves than 3
         # force integration
         "forcesAsTractions": False,  # Because we're using MELD not RLT
         # Separation sensor options
