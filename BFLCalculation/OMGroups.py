@@ -238,8 +238,8 @@ class STWTakeoffAnalysisGroup(om.Group):
             nn = self.options["num_nodes"]
             knTomps = 0.514444  # Conversion factor from knots to m/s
             v0Guess = 1.0 * knTomps
-            v1Guess = 100.0 * knTomps
-            vrGuess = 120.0 * knTomps
+            v1Guess = 60.0 * knTomps
+            vrGuess = 140.0 * knTomps
             # Initial guesses for takeoff speeds to help with convergence
             outputs["v0v1.fltcond|Utrue"][:] = np.linspace(v0Guess, v1Guess, nn)
             outputs["v1vr.fltcond|Utrue"][:] = np.linspace(v1Guess, vrGuess, nn)
