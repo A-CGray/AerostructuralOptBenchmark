@@ -228,13 +228,18 @@ class STWTakeoffAnalysisGroup(om.Group):
             maxiter=100,
             err_on_non_converge=True,
             reraise_child_analysiserror=True,
-            restart_from_successful=True,
+            # restart_from_successful=True,
         )
         self.nonlinear_solver.linesearch = om.ArmijoGoldsteinLS(maxiter=10, alpha=1.0, c=1e-4, rho=0.9, iprint=2)
         self.linear_solver = om.DirectSolver()
 
     def guess_nonlinear(self, inputs, outputs, residuals):
-        if self.callCounter == 0:
+        isNan = False
+        for key in outputs:
+            if np.any(np.isnan(outputs[key])):
+                isNan = True
+                break
+        if self.callCounter == 0 or isNan:
             nn = self.options["num_nodes"]
             knTomps = 0.514444  # Conversion factor from knots to m/s
             v0Guess = 1.0 * knTomps
@@ -247,8 +252,8 @@ class STWTakeoffAnalysisGroup(om.Group):
 
             # Need these if using ODE transition method
             try:
-                outputs["rotate.fltcond|Utrue"][:] = np.linspace(v1Guess, v1Guess, nn)
-                outputs["rotate.accel_vert"][:] = np.linspace(0.05, 1.0, nn)
+                outputs["rotate.fltcond|Utrue"][:] = np.linspace(v1Guess, 1.05 * v1Guess, nn)
+                outputs["rotate.accel_vert"][:] = np.linspace(0.05, 1.3, nn)
             except KeyError:
                 pass  # Not using the ODE transition method
         self.callCounter += 1
@@ -296,43 +301,27 @@ if __name__ == "__main__":
 
     # prob.set_val("takeoff|TempIncrement", np.full(numNodes, 15), units="degC")
 
-    # Initial guesses for takeoff speeds to help with convergence
-    # prob.set_val("v0v1.fltcond|Utrue", np.linspace(1.0, 140.0, numNodes), units="kn")
-    # prob.set_val("v1vr.fltcond|Utrue", np.linspace(140.0, 150.0, numNodes), units="kn")
-    # prob.set_val("v1v0.fltcond|Utrue", np.linspace(140.0, 1.0, numNodes), units="kn")
-
-    # # Need these if using ODE transition method
-    # try:
-    #     prob.set_val("rotate.fltcond|Utrue", np.linspace(100.0, 100.0, numNodes), units="kn")
-    #     prob.set_val("rotate.accel_vert", np.linspace(0.05, 1.0, numNodes), units="m/s**2")
-    # except KeyError:
-    #     pass  # Not using the ODE transition method
-
     # Set an initial guess for the takeoff flap setting away from te upper bound
     prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
 
-    prob.set_val("ac|geom|wing|S_ref", 2 * 45.48538689828745)
-    prob.set_val("ac|geom|wing|AR", 8.618152482171348)
-    prob.set_val("ac|geom|wing|c4sweep", np.deg2rad(25.323770790956313))
-    prob.set_val("ac|geom|wing|taper", 0.2999856206927242)
-    prob.set_val("ac|geom|wing|toverc", 0.1027263767954876)
-    prob.set_val("ac|weights|MTOW", 56701.54687557974)
+    # SciTech case 2 design
+    # prob.set_val("ac|geom|wing|S_ref", 2 * 45.485)
+    # prob.set_val("ac|geom|wing|AR", 8.618)
+    # prob.set_val("ac|geom|wing|c4sweep", 25.323, units="deg")
+    # prob.set_val("ac|geom|wing|taper", 0.3)
+    # prob.set_val("ac|geom|wing|toverc", 0.1027)
+    # prob.set_val("ac|weights|MTOW", 56701.0)
+
+    # Current case 4 design
+    prob.set_val("ac|geom|wing|S_ref", 2 * 52.93586643834821)
+    prob.set_val("ac|geom|wing|AR", 17.71373986495052)
+    prob.set_val("ac|geom|wing|c4sweep", 31.369019361605773, units="deg")
+    prob.set_val("ac|geom|wing|taper", 0.2032604351057381)
+    prob.set_val("ac|geom|wing|toverc", 0.116933314020621)
+    prob.set_val("ac|weights|MTOW", 59004.041024174156)
 
     prob.run_model()
-    of = ["bfl.distance_continue", "bfl.distance_abort"]
-    wrt = [
-        "ac|geom|wing|S_ref",
-        "ac|geom|wing|AR",
-        "ac|geom|wing|c4sweep",
-        "ac|geom|wing|taper",
-        "ac|geom|wing|toverc",
-        "ac|weights|MTOW",
-    ]
-    prob.check_totals(of=of, wrt=wrt, step=1e-100, method="cs", compact_print=True, step_calc="abs")
-
-    # prob.run_driver()
-
-    # prob.run_model()
+    prob.run_model()
 
     om.n2(prob, show_browser=False, outfile="takeoff_analysis_n2.html")
 
@@ -361,14 +350,13 @@ if __name__ == "__main__":
     for var in print_vars:
         print(f"{var['name']}: {prob.get_val(var['var'], units=var['units']).item()} {var['units']}")
 
-    takeoff_fig, takeoff_axs = plt.subplots(1, 3, figsize=[12, 5])
-    takeoff_axs = takeoff_axs.flatten()  # change 1x3 mtx of axes into 3-element vector
+    takeoff_fig, takeoff_axs = plt.subplots(1, 2, figsize=[12, 5])
+    takeoff_axs = takeoff_axs.flatten()  # change 1x2 mtx of axes into 2-element vector
 
     # Define variables to plot
     takeoff_vars = [
         {"var": "fltcond|h", "name": "Altitude", "units": "ft"},
         {"var": "fltcond|Utrue", "name": "True airspeed", "units": "kn"},
-        {"var": "throttle", "name": "Throttle", "units": None},
     ]
 
     for idx_fig, var in enumerate(takeoff_vars):
