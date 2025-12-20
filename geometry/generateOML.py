@@ -18,13 +18,14 @@ import argparse
 # External Python modules
 # ==============================================================================
 from pygeo import pyGeo
-from pygeo.geo_utils import createFittedWingFFD
+from pygeo.geo_utils import createFittedWingFFD, createMidsurfaceMesh
 import numpy as np
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
 from wingGeometry import wingGeometry
+from writeOASMesh import writeOASMesh
 
 spanIndex = wingGeometry["spanIndex"]
 chordIndex = wingGeometry["chordIndex"]
@@ -62,6 +63,53 @@ wingSurface.writeTecplot("wing.dat")
 wingSurface.writeIGES("wing.igs")
 wingSurface.writeTin("wing.tin")
 
+# ==============================================================================
+# Create VLM meshes
+# ==============================================================================
+wingLEList = wingGeometry["wing"]["LECoords"]
+wingTEList = wingGeometry["wing"]["TECoords"]
+
+# Add SOB point to LE and TE lists
+SOB_LE = wingLEList[0] + wingGeometry["wingbox"]["SOB"] / wingGeometry["wing"]["semiSpan"] * (
+    wingLEList[-1] - wingLEList[0]
+)
+SOB_TE = wingTEList[0] + wingGeometry["wingbox"]["SOB"] / wingGeometry["wing"]["semiSpan"] * (
+    wingTEList[-1] - wingTEList[0]
+)
+wingLEList = np.vstack([wingLEList[0], SOB_LE, wingLEList[-1]])
+wingTEList = np.vstack([wingTEList[0], SOB_TE, wingTEList[-1]])
+
+numChordPanels = [
+    4,
+    8,
+    16,
+]
+numSpanPanels = [
+    [1, 8],
+    [2, 16],
+    [4, 32],
+]
+for ii in range(len(numSpanPanels)):
+    vlmMesh = createMidsurfaceMesh(
+        wingSurface,
+        surfFormat="point-vector",
+        leList=wingLEList,
+        teList=wingTEList,
+        nSpan=[n + 1 for n in numSpanPanels[ii]],
+        nChord=numChordPanels[ii] + 1,
+        liftIndex=wingGeometry["verticalIndex"] + 1,
+        chordCosSpacing=0.75,
+    )
+
+    # OpenAeroStruct expects the mesh to be order tip to root for some godforsaken reason, so flip the spanwise axis
+    vlmMesh = np.flip(vlmMesh, 1)
+    meshName = f"wing-VLMSurf-L{3 - ii}"
+    np.save(f"../aero/{meshName}.npy", vlmMesh)
+    writeOASMesh(vlmMesh, f"{meshName}.dat")
+
+# ==============================================================================
+# Generate FFDs
+# ==============================================================================
 numFFDSpan = [6, 9, 12]
 numFFDChord = [8, 12, 16]
 

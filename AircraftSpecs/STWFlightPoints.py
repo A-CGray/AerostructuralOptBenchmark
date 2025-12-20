@@ -92,6 +92,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
     altitude=MANEUVER_ALTITUDE,
     alpha=8.7,
     evalFuncs=["lift", "drag", "cl", "cd"],
+    canUseVLM=True,
 )
 
 seaLevelLowSpeedPushDown = FlightPoint(
@@ -103,6 +104,7 @@ seaLevelLowSpeedPushDown = FlightPoint(
     altitude=MANEUVER_ALTITUDE,
     alpha=-5.8,
     evalFuncs=["lift", "drag", "cl", "cd"],
+    canUseVLM=True,
 )
 
 # ==============================================================================
@@ -168,6 +170,7 @@ flightPointSets = {
     "buffet_high_speed": [buffetHighSpeed],
     "3pt": [standardCruise, seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "2pt": [standardCruise, seaLevelLowSpeedPullUp],
+    "2ptmaneuver": [seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "5pt": [
         standardCruise,
         seaLevelLowSpeedPullUp,
