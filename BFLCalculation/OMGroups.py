@@ -243,8 +243,8 @@ class STWTakeoffAnalysisGroup(om.Group):
             nn = self.options["num_nodes"]
             knTomps = 0.514444  # Conversion factor from knots to m/s
             v0Guess = 1.0 * knTomps
-            v1Guess = 60.0 * knTomps
-            vrGuess = 140.0 * knTomps
+            v1Guess = 40.0 * knTomps
+            vrGuess = 120.0 * knTomps
             # Initial guesses for takeoff speeds to help with convergence
             outputs["v0v1.fltcond|Utrue"][:] = np.linspace(v0Guess, v1Guess, nn)
             outputs["v1vr.fltcond|Utrue"][:] = np.linspace(v1Guess, vrGuess, nn)
@@ -305,20 +305,36 @@ if __name__ == "__main__":
     prob.set_val("ac|aero|takeoff_flap_deg", 20.0, units="deg")
 
     # SciTech case 2 design
-    # prob.set_val("ac|geom|wing|S_ref", 2 * 45.485)
-    # prob.set_val("ac|geom|wing|AR", 8.618)
-    # prob.set_val("ac|geom|wing|c4sweep", 25.323, units="deg")
-    # prob.set_val("ac|geom|wing|taper", 0.3)
-    # prob.set_val("ac|geom|wing|toverc", 0.1027)
-    # prob.set_val("ac|weights|MTOW", 56701.0)
+    prob.set_val("ac|geom|wing|S_ref", 2 * 45.485)
+    prob.set_val("ac|geom|wing|AR", 8.618)
+    prob.set_val("ac|geom|wing|c4sweep", 25.323, units="deg")
+    prob.set_val("ac|geom|wing|taper", 0.3)
+    prob.set_val("ac|geom|wing|toverc", 0.1027)
+    prob.set_val("ac|weights|MTOW", 56767.77)
+
+    # SciTech case 3 design
+    # prob.set_val("ac|geom|wing|S_ref", 2 * 49.53)
+    # prob.set_val("ac|geom|wing|AR", 19.21)
+    # prob.set_val("ac|geom|wing|c4sweep", 29.1478, units="deg")
+    # prob.set_val("ac|geom|wing|taper", 0.2040996)
+    # prob.set_val("ac|geom|wing|toverc", 0.125608)
+    # prob.set_val("ac|weights|MTOW", 59430.8166303693)
+
+    # PhD case 3 + buffet design
+    # prob.set_val("ac|geom|wing|S_ref", 2 * 50.618)
+    # prob.set_val("ac|geom|wing|AR", 17.623)
+    # prob.set_val("ac|geom|wing|c4sweep", 32.6642, units="deg")
+    # prob.set_val("ac|geom|wing|taper", 0.202491)
+    # prob.set_val("ac|geom|wing|toverc", 0.116114)
+    # prob.set_val("ac|weights|MTOW", 59696.4)
 
     # Current case 4 design
-    prob.set_val("ac|geom|wing|S_ref", 2 * 52.93586643834821)
-    prob.set_val("ac|geom|wing|AR", 17.71373986495052)
-    prob.set_val("ac|geom|wing|c4sweep", 31.369019361605773, units="deg")
-    prob.set_val("ac|geom|wing|taper", 0.2032604351057381)
-    prob.set_val("ac|geom|wing|toverc", 0.116933314020621)
-    prob.set_val("ac|weights|MTOW", 59004.041024174156)
+    # prob.set_val("ac|geom|wing|S_ref", 2 * 53.5088601233375)
+    # prob.set_val("ac|geom|wing|AR", 17.62)
+    # prob.set_val("ac|geom|wing|c4sweep", 31.823411248493755, units="deg")
+    # prob.set_val("ac|geom|wing|taper", 0.846240550208035/4.18930891616763)
+    # prob.set_val("ac|geom|wing|toverc", 0.11461)
+    # prob.set_val("ac|weights|MTOW", 59039.8352041085)
 
     prob.run_model()
     prob.run_model()
@@ -391,5 +407,5 @@ if __name__ == "__main__":
         fontsize="small",
     )
     takeoff_fig.suptitle("Takeoff phases")
-    niceplots.save_figs(takeoff_fig, "takeoff_phases", ["png", "pdf"])
-    plt.show()
+    niceplots.save_figs(takeoff_fig, "takeoff_phases", ["png", "pdf", "svg"])
+    # plt.show()
