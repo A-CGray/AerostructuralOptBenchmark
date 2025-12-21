@@ -18,6 +18,7 @@ class FlightPoint(AeroProblem):
         fuelFraction: Optional[float] = 0.0,
         massConfig: Optional[str] = None,
         failureGroups: Optional[List[str]] = None,
+        canUseVLM: Optional[bool] = False,
         **kwargs,
     ):
         """Define a flight condition, this is basically just an AeroProblem with a few extra attributes
@@ -43,6 +44,7 @@ class FlightPoint(AeroProblem):
             raise ValueError(f"Invalid massConfig {massConfig}, must be one of {VALID_MASS_CONFIGS}")
         self.massConfig = massConfig
         self.failureGroups = failureGroups
+        self.canUseVLM = canUseVLM
 
 
 class LoadCase:

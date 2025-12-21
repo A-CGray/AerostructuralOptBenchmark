@@ -40,6 +40,7 @@ from mphys import Multipoint, MPhysVariables
 from mphys.scenarios import ScenarioAeroStructural, ScenarioStructural
 from adflow.mphys import ADflowBuilder
 from adflow import ADFLOW
+from openaerostruct.mphys import AeroBuilder as OASBuilder
 from idwarp import USMesh
 from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
@@ -81,6 +82,7 @@ from utils import (
     getTriangulatedSurface,
     AverageComp,
     getRelevantInputs,
+    getAeroForceName,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -117,7 +119,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="derivCheck",
+    default="analysis",
     choices=[
         "writeJigShape",
         "check",
@@ -130,7 +132,12 @@ parser.add_argument(
     ],
     help="Task to run",
 )
-parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
+parser.add_argument(
+    "--flightPointSet", type=str, default="mnver_sealevel_va_pullup", choices=list(flightPointSets.keys())
+)
+parser.add_argument(
+    "--vlmFlightPoints", nargs="*", default=["mnver_sealevel_va_pullup"], help="List of flight points to use VLM for"
+)
 parser.add_argument(
     "--procs",
     type=int,
@@ -279,6 +286,17 @@ for fp in flightPoints:
 
 flightPointsDict = {fp.name: fp for fp in flightPoints}
 
+# Raise an error if the user is trying to use a VLM for a flightpoint that doesn't support VLM
+for vlmFP in args.vlmFlightPoints:
+    errorString = f"You specified flight point {vlmFP} to use VLM, but this flight point "
+    if vlmFP not in flightPointsDict:
+        raise ValueError(
+            errorString
+            + f"is not in the selected flight point set. Selected flight point set ({args.flightPointSet}) includes {list(flightPointsDict.keys())}"
+        )
+    if not flightPointsDict[vlmFP].canUseVLM:
+        raise ValueError(errorString + "cannot be modeled using VLM")
+
 # We can't include anything related to the fuelburn if we don't have a cruise point
 hasCruisePoint = any(["cruise" in fp.name.lower() for fp in flightPoints])
 if not hasCruisePoint:
@@ -301,55 +319,6 @@ if args.aeroLevel > 1:
 
 # Create output directories
 outputDir = os.path.join(OUTPUT_PARENT_DIR, args.output)
-
-# Define location of input files
-structMeshFile = getStructMeshPath(level=args.structLevel, order=args.structOrder)
-
-aeroMeshFile = getAeroMeshPath(level=args.aeroLevel)
-
-ffdFile = getFFDPath(level=args.ffdLevel)
-
-structOnlyOpt = args.task == "opt" and args.optType == "structMass"
-
-structMeshSpacing = {
-    1: 0.035,
-    2: 0.07,
-    3: 0.14,
-    4: 0.23,
-}
-
-aeroMeshChordSpacing = {
-    1: 0.06005,
-    2: 0.116,
-    3: 0.2447,
-}
-aeroMeshSpanSpacing = {
-    1: 0.157,
-    2: 0.312,
-    3: 0.60,
-}
-
-
-if args.nMeld is None:
-    # This an approximation of the ratio of structural nodes to aero nodes in the coarsest part of the aero mesh, used to
-    # tell MELD how many structural nodes to connect each aero node to. Multiplying this estimate by 4 seems to
-    # provide a reasonable N value where the aero forces are not concentrated at the nearest structural nodes.
-    MELD_MESH_FACTOR = max(
-        100,
-        int(
-            4
-            * aeroMeshSpanSpacing[args.aeroLevel]
-            * aeroMeshChordSpacing[args.aeroLevel]
-            / structMeshSpacing[args.structLevel] ** 2
-        ),
-    )
-    # The Super fine aero mesh is particularly prone to negative volumes due to structural deformations so we use a larger
-    # lower limit on N for it
-    if args.aeroLevel == 1:
-        MELD_MESH_FACTOR = max(200, MELD_MESH_FACTOR)
-else:
-    MELD_MESH_FACTOR = args.nMeld
-
 
 # ==============================================================================
 # Processor allocation
@@ -395,6 +364,80 @@ ptRank = ptComm.rank
 localFlightPoint = flightPoints[ptID]
 isAeroStruct = isinstance(localFlightPoint, FlightPoint)
 isCruisePoint = hasCruisePoint and "cruise" in localFlightPoint.name.lower()
+
+# Store a flag the tells us if we're using a VLM for this proc's flightpoint
+usingVLM = localFlightPoint.name in args.vlmFlightPoints
+
+# ==============================================================================
+# Get input files
+# ==============================================================================
+# Define location of input files
+structMeshFile = getStructMeshPath(level=args.structLevel, order=args.structOrder)
+
+aeroMeshFile = getAeroMeshPath(level=args.aeroLevel, useVLM=usingVLM)
+
+ffdFile = getFFDPath(level=args.ffdLevel)
+
+structOnlyOpt = args.task == "opt" and args.optType == "structMass"
+
+structMeshSpacing = {
+    1: 0.035,
+    2: 0.07,
+    3: 0.14,
+    4: 0.23,
+}
+
+if usingVLM:
+    aeroMeshChordSpacing = {
+        1: 0.44,
+        2: 0.88,
+        3: 1.76,
+    }
+    aeroMeshSpanSpacing = {
+        1: 0.38,
+        2: 0.76,
+        3: 1.52,
+    }
+else:
+    aeroMeshChordSpacing = {
+        1: 0.06005,
+        2: 0.116,
+        3: 0.2447,
+    }
+    aeroMeshSpanSpacing = {
+        1: 0.157,
+        2: 0.312,
+        3: 0.60,
+    }
+
+
+if args.nMeld is None:
+    # This an approximation of the ratio of structural nodes to aero nodes in the coarsest part of the aero mesh, used to
+    # tell MELD how many structural nodes to connect each aero node to. Multiplying this estimate by 4 seems to
+    # provide a reasonable N value where the aero forces are not concentrated at the nearest structural nodes.
+    MELD_MESH_FACTOR = max(
+        100,
+        int(
+            4
+            * aeroMeshSpanSpacing[args.aeroLevel]
+            * aeroMeshChordSpacing[args.aeroLevel]
+            / structMeshSpacing[args.structLevel] ** 2
+        ),
+    )
+    # The Super fine aero mesh is particularly prone to negative volumes due to structural deformations so we use a larger
+    # lower limit on N for it
+    if args.aeroLevel == 1:
+        MELD_MESH_FACTOR = max(200, MELD_MESH_FACTOR)
+else:
+    MELD_MESH_FACTOR = args.nMeld
+
+# Multiply by 2 for VLM because we'll be transferring to top and bottom of wingbox
+if usingVLM:
+    MELD_MESH_FACTOR *= 3
+
+# ==============================================================================
+# Setup output directories and files
+# ==============================================================================
 
 # Create output directories
 localOutputDir = os.path.join(outputDir, localFlightPoint.name)
@@ -517,31 +560,51 @@ structBuilder = TacsBuilder(
 )
 
 # ==============================================================================
-# ADflow/getIDWarp Setup
+# Aero Setup
 # ==============================================================================
-aeroOptions = getADflowOptions(aeroMeshFile, localAeroOutputDir, aerostructural=True)
-if args.aeroLevel == 3:
-    aeroOptions["anksecondordswitchtol"] *= 10
-    aeroOptions["rkreset"] = True
-if args.noFiles:
-    aeroOptions["writeTecplotSurfaceSolution"] = False
-    aeroOptions["writevolumesolution"] = False
-    aeroOptions["writesurfacesolution"] = False
-if args.aeroTol is not None:
-    aeroOptions["L2ConvergenceRel"] = args.aeroTol
-if args.aeroMaxIter is not None:
-    aeroOptions["nCycles"] = args.aeroMaxIter
+if usingVLM:
+    VLMMesh = np.load(aeroMeshFile)
+    surf_dict = {
+        # Wing definition
+        "name": "wall",  # name of the surface
+        "symmetry": True,  # if true, model one half of wing
+        "S_ref_type": "wetted",  # how we compute the wing area, can be 'wetted' or 'projected'
+        "CL0": 0.0,  # CL of the surface at alpha=0
+        "CD0": 0.0,  # CD of the surface at alpha=0
+        "with_viscous": False,  # if true, compute viscous drag,
+        "k_lam": 0.05,  # percentage of chord with laminar flow
+        "t_over_c": 0.12,  # thickness over chord ratio (NACA0012)
+        "c_max_t": 0.303,  # chordwise location of maximum (NACA0012)
+        "with_wave": False,
+        "mesh": VLMMesh,
+    }
+    aeroBuilder = OASBuilder(
+        [surf_dict], options={"compressible": True, "output_dir": localAeroOutputDir, "write_solution": True}
+    )
+else:
+    aeroOptions = getADflowOptions(aeroMeshFile, localAeroOutputDir, aerostructural=True)
+    if args.aeroLevel == 3:
+        aeroOptions["anksecondordswitchtol"] *= 10
+        aeroOptions["rkreset"] = True
+    if args.noFiles:
+        aeroOptions["writeTecplotSurfaceSolution"] = False
+        aeroOptions["writevolumesolution"] = False
+        aeroOptions["writesurfacesolution"] = False
+    if args.aeroTol is not None:
+        aeroOptions["L2ConvergenceRel"] = args.aeroTol
+    if args.aeroMaxIter is not None:
+        aeroOptions["nCycles"] = args.aeroMaxIter
 
-warpOptions = getIDWarpOptions(aeroMeshFile)
-aeroBuilder = ADflowBuilder(
-    aeroOptions,
-    mesh_options=warpOptions,
-    scenario="aerostructural",
-    write_solution=False,
-    res_ref=1e7,
-    restart_failed_analysis=False,
-    linear_precon_only=False,
-)
+    warpOptions = getIDWarpOptions(aeroMeshFile)
+    aeroBuilder = ADflowBuilder(
+        aeroOptions,
+        mesh_options=warpOptions,
+        scenario="aerostructural",
+        write_solution=False,
+        res_ref=1e7,
+        restart_failed_analysis=False,
+        linear_precon_only=False,
+    )
 
 
 # ==============================================================================
@@ -593,16 +656,16 @@ class AnalysisPoint(Multipoint):
 
         if isAeroStruct:
             # ==============================================================================
-            # ADflow setup
+            # Aero setup
             # ==============================================================================
             # --- initialize aero builder ---
             aeroBuilder.initialize(self.comm)
-            self.aeroSolver = aeroBuilder.get_solver()
+            self.aeroSolver = None if usingVLM else aeroBuilder.get_solver()
             builders["aero"] = aeroBuilder
             disciplineVariables["aero"] = MPhysVariables.Aerodynamics.Surface
 
             # Add lift distribution and slice file output
-            if not args.noFiles:
+            if not args.noFiles and self.aeroSolver is not None:
                 self.aeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
                 slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 51)
                 self.aeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
@@ -732,6 +795,32 @@ class AnalysisPoint(Multipoint):
 
         self.connect("dv_struct_full", f"{self.fpName}.dv_struct")
 
+        # ==============================================================================
+        # Fix lift and drag outputs
+        # ==============================================================================
+        # ADflow and OpenAerostruct don't compute lift and drag in the same way, so we need to fix the outputs
+        # ADflow computes the lift/drag of the single wing, the outputs are not promoted and are called "lift" and "drag"
+        # OpenAerostruct computes the lift and drag for 2 wings, the outputs are promoted and are called "L" and "D"
+
+        # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
+        if usingVLM:
+            scaleFactor = 0.5
+            inputNames = [f"{self.fpName}.L", f"{self.fpName}.D"]
+        else:
+            scaleFactor = 1.0
+            inputNames = [f"{self.fpName}.aero_post.lift", f"{self.fpName}.aero_post.drag"]
+
+        for outputName, inputName in zip(["Lift", "Drag"], inputNames, strict=True):
+            self.add_subsystem(
+                f"{outputName}CorrectionComp",
+                om.ExecComp(
+                    f"{getAeroForceName(self.fpName, outputName)} = {scaleFactor} * F",
+                    units="N",
+                ),
+                promotes_outputs=["*"],
+            )
+            self.connect(inputName, f"{outputName}CorrectionComp.F")
+
         if isAeroStruct:
             # ==============================================================================
             # Setup performance calculations
@@ -792,7 +881,7 @@ class AnalysisPoint(Multipoint):
                     "drag",
                 ]:
                     self.connect(
-                        f"{self.fpName}.aero_post.{force.lower()}",
+                        getAeroForceName(self.fpName, force),
                         f"fuelBurn.cruise{force.capitalize()}",
                     )
 
@@ -863,19 +952,49 @@ class AnalysisPoint(Multipoint):
         dvComp = self.dvs
 
         if isAeroStruct:
-            # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
             fp = localFlightPoint
             scenario = getattr(self, self.fpName)
-            fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
-            scenario.coupling.aero.mphys_set_ap(fp)
-            scenario.aero_post.mphys_set_ap(fp)
-            alphaDVName = f"{self.fpName}_AOA"
+            # Add this point's angle of angle of attack as a DV
+            alphaDVName = f"{fp.name}_AOA"
             dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
             self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
-            self.connect(
-                alphaDVName,
-                [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
-            )
+            if usingVLM:
+                # OpenAerostruct gets flight conditions from inputs instead of the aero problem
+                dvComp.add_output(f"{fp.name}-rho", val=fp.rho, units="kg/m**3")
+                dvComp.add_output(f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}", fp.mach)
+                dvComp.add_output(f"{fp.name}-v", fp.V, units="m/s")
+                dvComp.add_output(
+                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}", fp.re, units="1/m"
+                )
+
+                dvNames = [
+                    alphaDVName,
+                    f"{fp.name}-rho",
+                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}",
+                    f"{fp.name}-v",
+                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}",
+                ]
+                inputNames = [
+                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}",
+                    f"{fp.name}.rho",
+                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}",
+                    f"{fp.name}.v",
+                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}",
+                ]
+                for dvName, inputName in zip(dvNames, inputNames, strict=True):
+                    self.connect(dvName, inputName)
+            else:
+                # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
+                fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
+                scenario.coupling.aero.mphys_set_ap(fp)
+                scenario.aero_post.mphys_set_ap(fp)
+                alphaDVName = f"{self.fpName}_AOA"
+                dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
+                self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
+                self.connect(
+                    alphaDVName,
+                    [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
+                )
 
         # Setup the geometric DVs and constraints, we only need to compute the geometric constraints (LE radius,
         # thickness, area etc) on one proc set
@@ -914,8 +1033,8 @@ class AnalysisPoint(Multipoint):
             )
             self.connect(f"geometry.{wimpressCoordName}", "PlanformValues.x_wimpress")
 
-        # Only add TACS constraints on the first proc set
-        if ptID == 0 and args.addStructDVs:
+        # Only add TACS constraints on the first proc set and if we're actually doing an optimisation
+        if ptID == 0 and args.addStructDVs and args.task == "opt":
             firstScenario = getattr(self, self.fpName)
             add_tacs_constraints(firstScenario)
 
@@ -962,7 +1081,7 @@ class AnalysisPoint(Multipoint):
         # will then write solution files from this solver without every actually running it
         self.dummyAeroSolver = None
         if isAeroStruct:
-            if not args.noFiles:
+            if not args.noFiles and self.aeroSolver is not None:
                 if ptID == 0:
                     self.dummyAeroSolver = ADFLOW(options=aeroOptions, comm=self.comm)
                     self.dummyAeroSolver.setAeroProblem(localFlightPoint)
@@ -984,7 +1103,7 @@ flightPointProb.model = AnalysisPoint()
 
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm, work_dir=outputDir)
-includeFuelMassConstraints = args.useFuelMassDVs and hasCruisePoint
+includeFuelMassConstraints = args.useFuelMassDVs  # and hasCruisePoint
 includeFuelVolumeConstraint = (
     includeFuelMassConstraints and args.task in ["opt", "check"] and (args.span or args.taper or args.shape)
 )
@@ -1134,7 +1253,7 @@ for inpName in performanceProbInputs:
     elif "Drag" in inpName or "Lift" in inpName:
         fpName = inpName[:-4]
         forceName = inpName[-4:]
-        perf2FlightPointMap[inpName] = f"{fpName}.aero_post.{forceName.lower()}"
+        perf2FlightPointMap[inpName] = getAeroForceName(fpName, forceName)
 
 # The map only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
 perf2FlightPointMap = globalComm.bcast(perf2FlightPointMap, root=0)
@@ -1312,12 +1431,13 @@ def writeAeroStructSolution():
     scenario = getattr(flightPointProb.model, localFlightPoint.name)
     scenario.struct_post.write_solution()
     if isAeroStruct:
-        scenario.aero_post.nom_write_solution()
-        if ptID == 0:
-            dummyAeroSolver = flightPointProb.model.dummyAeroSolver
-            dummyAeroSolver.setAeroProblem(localFlightPoint)
-            dummyAeroSolver(localFlightPoint, writeSolution=False)
-            dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter - 1))
+        if not usingVLM:
+            scenario.aero_post.nom_write_solution()
+            if ptID == 0:
+                dummyAeroSolver = flightPointProb.model.dummyAeroSolver
+                dummyAeroSolver.setAeroProblem(localFlightPoint)
+                dummyAeroSolver(localFlightPoint, writeSolution=False)
+                dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter - 1))
 
 
 def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):

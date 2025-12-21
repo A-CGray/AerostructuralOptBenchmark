@@ -4,6 +4,7 @@
 import re
 import os
 import sys
+from typing import Optional
 
 # ==============================================================================
 # External Python modules
@@ -40,8 +41,15 @@ def getFlightPointSet(name: str) -> list:
     return flightPointSets[name]
 
 
-def getAeroMeshPath(level: int) -> str:
-    return os.path.join(THIS_FILE_DIR, f"../aero/wing_vol_L{level}.cgns")
+def getAeroMeshPath(level: int, useVLM: Optional[bool] = False) -> str:
+    if useVLM:
+        return os.path.join(THIS_FILE_DIR, f"../aero/wing-VLMSurf-L{level}.npy")
+    else:
+        return os.path.join(THIS_FILE_DIR, f"../aero/wing_vol_L{level}.cgns")
+
+
+def getAeroForceName(fpName: str, forceName: str) -> str:
+    return f"{fpName}_{forceName.capitalize()}"
 
 
 def getStructMeshPath(level: int, order: int) -> str:
