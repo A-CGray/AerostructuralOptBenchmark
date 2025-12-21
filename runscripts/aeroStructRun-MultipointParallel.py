@@ -692,7 +692,7 @@ class AnalysisPoint(Multipoint):
         # ==============================================================================
         fuelDVName = f"{self.fpName}-fuelMass"
         dvSys.add_output(
-            fuelDVName, val=11000.0, shape=1
+            fuelDVName, val=0.0, shape=1
         )  # Total fuel mass value, placeholder for now TODO: How should this be set if it's not a DV?
         if args.useFuelMassDVs:
             self.add_design_var(
@@ -1057,7 +1057,7 @@ if args.task != "trim":
         if includeFuelVolumeConstraint:
             performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
         # --- Wing loading constraint ---
-        if ptID == 0 and (args.span or args.taper):
+        if isCruisePoint and (args.span or args.taper):
             # This constraint should only be applied if the optimiser has control over the wing planform
             flightPointProb.model.add_constraint(
                 "wingLoading",
@@ -1576,7 +1576,7 @@ if len(args.postInitDVs) != 0:
 if args.task == "polar":
     alphaPert = 1.0
     machPert = 0.02
-    numPoints = 9
+    numPoints = 11
     alphas = localFlightPoint.alpha + np.linspace(-alphaPert, alphaPert, numPoints)
     machs = localFlightPoint.mach + np.linspace(-machPert, machPert, numPoints)
     for alphaIndex, alpha in enumerate(alphas):
