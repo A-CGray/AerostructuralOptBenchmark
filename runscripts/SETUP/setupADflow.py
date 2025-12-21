@@ -30,6 +30,8 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
             "yplus",
             "cf",
             "cfx",
+            "cfy",
+            "cfz",
             "sepsensor",
             "sepsensorks",
             "sepsensorksarea",
@@ -37,7 +39,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "isosurface": {"vx": -0.001, "shock": 1.0},
         "writeTecplotSurfaceSolution": True,
         "writevolumesolution": False,
-        "writesurfacesolution": False,
+        "writesurfacesolution": True,
         # Printing Parameters
         "setMonitor": True,
         "printTiming": False,
@@ -97,6 +99,6 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         # New sepsenson formulation
         "computeSepSensorKs": True,
         "sepSensorKsRho": 1000.0,
-        "sepSensorKsPhi": 80.0,
+        "sepSensorKsPhi": 60.0,
     }
     return aero_options
