@@ -89,6 +89,12 @@ parser.add_argument(
 # --- Structure options ---
 parser.add_argument("--nonlinear", action="store_true", help="Use nonlinear structural analysis")
 parser.add_argument(
+    "--drill",
+    type=float,
+    default=None,
+    help="Drill stiffness to use for TACS shell elements, by default uses TACS default drill stiffness",
+)
+parser.add_argument(
     "--addStructDVs",
     action="store_true",
     help="Whether to add structural design variables as OpenMDAO design variables",

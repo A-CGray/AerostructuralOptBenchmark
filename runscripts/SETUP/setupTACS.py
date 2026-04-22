@@ -336,6 +336,8 @@ def element_callback(
         stiffenerPlyFracNums=stiffenerPlyFracNums,
         flangeFraction=flangeFraction,
     )
+    if args.drill is not None:
+        con.setDrillingRegularization(args.drill)
     if usePlyFractionDVs:
         con.setPanelPlyFractionBounds(
             defaultPlyFractionMin * np.ones(numPlies),
