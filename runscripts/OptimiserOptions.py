@@ -75,6 +75,21 @@ def getOptOptions(
             "corrector_type": "primal-dual",
             "print_user_options": "yes",
         }
+    if "uno" in alg.lower():
+        commonOptions = {
+            "logger_stream": os.path.join(outputDir, "UNO.out"),
+            "primal_tolerance": feasibility,
+            "dual_tolerance": optimality,
+            "loose_primal_tolerance": feasibility,
+            "loose_dual_tolerance": optimality,
+            "quasi_newton_memory_size": hessianUpdate,
+            "max_iterations": majIterLimit,
+        }
+        for presets in ["filtersqp", "filterslp", "funnelsqp", "ipopt"]:
+            if presets in alg.lower():
+                commonOptions["presets"] = presets
+                break
+        return commonOptions
 
     if alg.lower() == "nlpqlp":
         return {
