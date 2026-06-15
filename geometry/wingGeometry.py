@@ -28,8 +28,53 @@ spanIndex = 1  # index of the spanwise direction (0=x, 1=y, 2=z)
 chordIndex = 0  # index of the chordwise direction (0=x, 1=y, 2=z)
 verticalIndex = 2  # index of the vertical direction (0=x, 1=y, 2=z)
 
+
+def computeLETECoords(wingGeoData):
+    LECoords = np.zeros((2, 3))  # Leading edge coordinates of each section
+    LECoords[:, spanIndex] = wingGeoData["semiSpan"] * wingGeoData["sectionEta"]
+    LECoords[:, chordIndex] = wingGeoData["sectionChordwiseOffset"]
+    LECoords[:, verticalIndex] = wingGeoData["sectionVerticalOffset"]
+
+    TECoords = np.zeros((2, 3))  # Trailing edge coordinates of each section
+    TECoords = np.zeros((2, 3))  # Trailing edge coordinates of each section
+    TECoords[:, spanIndex] = wingGeoData["semiSpan"] * wingGeoData["sectionEta"]
+    TECoords[:, chordIndex] = wingGeoData["sectionChordwiseOffset"] + wingGeoData["sectionChord"] * np.cos(
+        np.deg2rad(wingGeoData["sectionTwist"])
+    )
+    TECoords[:, verticalIndex] = wingGeoData["sectionVerticalOffset"] - wingGeoData["sectionChord"] * np.sin(
+        np.deg2rad(wingGeoData["sectionTwist"])
+    )
+    return LECoords, TECoords
+
+
+def computePlanformProperties(wingGeoData):
+    area = 0.0
+    MAC = 0.0
+    quarterChordSweep = 0.0
+    quarterChordCoords = 0.75 * wingGeoData["LECoords"] + 0.25 * wingGeoData["TECoords"]
+    for ii in range(len(wingGeoData["sectionEta"]) - 1):
+        trapRootChord = wingGeoData["sectionChord"][ii]
+        trapTipChord = wingGeoData["sectionChord"][ii + 1]
+        trapSpan = wingGeoData["semiSpan"] * (wingGeoData["sectionEta"][ii + 1] - wingGeoData["sectionEta"][ii])
+        trapArea = trapSpan * (trapRootChord + trapTipChord) * 0.5
+        area += trapArea
+        MAC += trapArea * (
+            (2.0 / 3.0) * (trapRootChord + trapTipChord - trapRootChord * trapTipChord / (trapRootChord + trapTipChord))
+        )
+        quarterChordLine = quarterChordCoords[ii + 1] - quarterChordCoords[ii]
+        quarterChordSweep += trapArea * np.abs(
+            np.rad2deg(np.arctan2(quarterChordLine[chordIndex], quarterChordLine[spanIndex]))
+        )
+
+    MAC /= area
+    quarterChordSweep /= area
+    aspectRatio = 2 * (wingGeoData["semiSpan"] ** 2) / area
+    taperRatio = wingGeoData["sectionChord"][-1] / wingGeoData["sectionChord"][0]
+    return area, MAC, quarterChordSweep, aspectRatio, taperRatio
+
+
 # ==============================================================================
-# OML Definition
+# Wing Definition
 # ==============================================================================
 semiSpan = 14.0  # semi-span of the wing in metres
 
@@ -42,29 +87,25 @@ sectionProfiles = ["rae2822.dat"] * 2  # Airfoil profile files for each section
 
 teHeight = 0.25 * 0.0254  # thickness of the trailing edge (1/4 inch) in metres
 
-LECoords = np.zeros((2, 3))  # Leading edge coordinates of each section
-LECoords[:, spanIndex] = semiSpan * sectionEta
-LECoords[:, chordIndex] = sectionChordwiseOffset
-LECoords[:, verticalIndex] = sectionVerticalOffset
-
-TECoords = np.zeros((2, 3))  # Trailing edge coordinates of each section
-TECoords = np.zeros((2, 3))  # Trailing edge coordinates of each section
-TECoords[:, spanIndex] = semiSpan * sectionEta
-TECoords[:, chordIndex] = sectionChordwiseOffset + sectionChord * np.cos(np.deg2rad(sectionTwist))
-TECoords[:, verticalIndex] = sectionVerticalOffset - sectionChord * np.sin(np.deg2rad(sectionTwist))
-
-
-rootChord = sectionChord[0]
-tipChord = sectionChord[1]
-planformArea = semiSpan * (rootChord + tipChord) * 0.5
-meanAerodynamicChord = (2.0 / 3.0) * (rootChord + tipChord - rootChord * tipChord / (rootChord + tipChord))
-aspectRatio = 2 * (semiSpan**2) / planformArea
-taperRatio = tipChord / rootChord
-
-# quarter-chord sweep angle (quarter chord tip point minus quarter chord root point)
-quarterChordCoords = 0.75 * LECoords + 0.25 * TECoords
-quarterChordLine = quarterChordCoords[1] - quarterChordCoords[0]
-quarterChordSweep = np.abs(np.rad2deg(np.arctan2(quarterChordLine[chordIndex], quarterChordLine[spanIndex])))
+wingGeoData = {
+    "semiSpan": semiSpan,
+    "sectionEta": sectionEta,
+    "sectionChord": sectionChord,
+    "sectionChordwiseOffset": sectionChordwiseOffset,
+    "sectionVerticalOffset": sectionVerticalOffset,
+    "sectionTwist": sectionTwist,
+    "sectionProfiles": sectionProfiles,
+    "teHeight": teHeight,
+}
+LECoords, TECoords = computeLETECoords(wingGeoData)
+wingGeoData["LECoords"] = LECoords
+wingGeoData["TECoords"] = TECoords
+hTailArea, hTailMAC, hTailQuarterChordSweep, hTailAspectRatio, hTailTaperRatio = computePlanformProperties(wingGeoData)
+wingGeoData["planformArea"] = hTailArea
+wingGeoData["meanAerodynamicChord"] = hTailMAC
+wingGeoData["quarterChordSweep"] = hTailQuarterChordSweep
+wingGeoData["aspectRatio"] = hTailAspectRatio
+wingGeoData["taperRatio"] = hTailTaperRatio
 
 # --- High lift devices ---
 # These fracttions are measured very roughly from the planform drawing at the start of the Boeing 717 airport planning
@@ -80,20 +121,70 @@ SLAT_CHORD_FRAC = 0.15
 
 # Compute the fraction of the wing area that is flapped
 midFlapSpanFrac = 0.5 * (FLAP_OUTBOARD_SPAN_FRAC - FLAP_INBOARD_SPAN_FRAC)
+rootChord = sectionChord[0]
+tipChord = sectionChord[-1]
+planformArea = wingGeoData["planformArea"]
 midFlapChord = rootChord * (1.0 - midFlapSpanFrac) + tipChord * midFlapSpanFrac
 FLAP_AREA_FRAC = semiSpan * (FLAP_OUTBOARD_SPAN_FRAC - FLAP_INBOARD_SPAN_FRAC) * midFlapChord / planformArea
 
-# --- Now define the tails ---
-hTailRootChord = 3.25
-hTailTipChord = 1.22
-hTailSemiSpan = 6.5
-hTailPlanformArea = hTailSemiSpan * (hTailRootChord + hTailTipChord) * 0.5
-hTailMeanAerodynamicChord = hTailPlanformArea * (
-    (2.0 / 3.0) * (hTailRootChord + hTailTipChord - hTailRootChord * hTailTipChord / (hTailRootChord + hTailTipChord))
-)
-hTailaspectRatio = 2 * (hTailSemiSpan**2) / hTailPlanformArea
-hTailSweep = 30.0
-hTailTaperRatio = hTailTipChord / hTailRootChord
+
+highLiftData = {
+    "flapInboardSpanFrac": FLAP_INBOARD_SPAN_FRAC,
+    "flapOutboardSpanFrac": FLAP_OUTBOARD_SPAN_FRAC,
+    "flapChordFrac": FLAP_CHORD_FRAC,
+    "slatInboardSpanFrac": SLAT_INBOARD_SPAN_FRAC,
+    "slatOutboardSpanFrac": SLAT_OUTBOARD_SPAN_FRAC,
+    "slatChordFrac": SLAT_CHORD_FRAC,
+    "FlapAreaFrac": FLAP_AREA_FRAC,
+}
+wingGeoData.update(highLiftData)
+
+# ==============================================================================
+# Horizontal Tail Definition
+# ==============================================================================
+# Values for textbook drag estimate
+Q_TAIL = 1.03  # Interference factor for clean tail, presumably from Raymer sec 12?
+TAIL_THICKNESS = 0.1  # Guess of tail t/c
+
+hTailSemiSpan = 5.6  # semi-span of the horizontal tail in metres
+hTailSectionEta = np.array([0.0, 1.0])  # Normalised spanwise coordinates of the wing sections
+hTailSectionChord = np.array([3.37, 1.2])  # Chord length of the wing sections in metres
+hTailChordOffset = 17.5  # Chordwise offset of the horizontal tail from the wing in metres
+hTailSectionChordwiseOffset = np.array(
+    [hTailChordOffset, hTailChordOffset + 3.98]
+)  # Offset of each section in the chordwise direction in metres
+hTailVerticalOffset = 5.9  # Vertical offset of the horizontal tail from the wing in metres
+hTailSectionVerticalOffset = np.array(
+    [hTailVerticalOffset, hTailVerticalOffset]
+)  # Offset of each section in the vertical direction in metres
+hTailSectionTwist = np.array([0.0, 0.0])  # Twist of each section (around the spanwise axis) in degrees
+hTailSectionProfiles = [
+    "TailProfiles/CRMTailCADRoot-Fixed_spline_smoothed.dat",
+    "TailProfiles/CRMTailCADTip-Fixed_spline_smoothed.dat",
+]  # Airfoil profile files for each section
+
+hTailGeoData = {
+    "semiSpan": hTailSemiSpan,
+    "sectionEta": hTailSectionEta,
+    "sectionChord": hTailSectionChord,
+    "sectionChordwiseOffset": hTailSectionChordwiseOffset,
+    "sectionVerticalOffset": hTailSectionVerticalOffset,
+    "sectionTwist": hTailSectionTwist,
+    "sectionProfiles": hTailSectionProfiles,
+    "teHeight": teHeight,
+}
+hTailLECoords, hTailTECoords = computeLETECoords(hTailGeoData)
+hTailGeoData["LECoords"] = hTailLECoords
+hTailGeoData["TECoords"] = hTailTECoords
+hTailArea, hTailMAC, hTailQuarterChordSweep, hTailAspectRatio, hTailTaperRatio = computePlanformProperties(hTailGeoData)
+hTailGeoData["planformArea"] = hTailArea
+hTailGeoData["meanAerodynamicChord"] = hTailMAC
+hTailGeoData["quarterChordSweep"] = hTailQuarterChordSweep
+hTailGeoData["aspectRatio"] = hTailAspectRatio
+hTailGeoData["taperRatio"] = hTailTaperRatio
+
+hTailGeoData["QFactor"] = Q_TAIL
+hTailGeoData["toverc"] = TAIL_THICKNESS
 
 vTailRootChord = 15.3 * 0.3048
 vTailTipChord = 12.12 * 0.3048
@@ -105,10 +196,6 @@ vTailMeanAerodynamicChord = vTailPlanformArea * (
 vTailaspectRatio = 2 * (vTailSemiSpan**2) / vTailPlanformArea
 vTailSweep = 37.0
 vTailTaperRatio = vTailTipChord / vTailRootChord
-
-# Values for textbook drag estimate
-Q_TAIL = 1.03  # Interference factor for clean tail, presumably from Raymer sec 12?
-TAIL_THICKNESS = 0.1  # Guess of tail t/c
 
 # --- Nacelle ---
 nacelleLength = 5.865
@@ -184,42 +271,8 @@ wingGeometry = {}
 wingGeometry["spanIndex"] = spanIndex
 wingGeometry["chordIndex"] = chordIndex
 wingGeometry["verticalIndex"] = verticalIndex
-wingGeometry["wing"] = {
-    "semiSpan": semiSpan,
-    "sectionEta": sectionEta,
-    "sectionChord": sectionChord,
-    "sectionChordwiseOffset": sectionChordwiseOffset,
-    "sectionVerticalOffset": sectionVerticalOffset,
-    "sectionTwist": sectionTwist,
-    "sectionProfiles": sectionProfiles,
-    "teHeight": teHeight,
-    "LECoords": LECoords,
-    "TECoords": TECoords,
-    "planformArea": planformArea,
-    "meanAerodynamicChord": meanAerodynamicChord,
-    "aspectRatio": aspectRatio,
-    "taperRatio": taperRatio,
-    "quarterChordSweep": quarterChordSweep,
-    "flapInboardSpanFrac": FLAP_INBOARD_SPAN_FRAC,
-    "flapOutboardSpanFrac": FLAP_OUTBOARD_SPAN_FRAC,
-    "flapChordFrac": FLAP_CHORD_FRAC,
-    "slatInboardSpanFrac": SLAT_INBOARD_SPAN_FRAC,
-    "slatOutboardSpanFrac": SLAT_OUTBOARD_SPAN_FRAC,
-    "slatChordFrac": SLAT_CHORD_FRAC,
-    "FlapAreaFrac": FLAP_AREA_FRAC,
-}
-wingGeometry["hTail"] = {
-    "rootChord": hTailRootChord,
-    "tipChord": hTailTipChord,
-    "semiSpan": hTailSemiSpan,
-    "planformArea": hTailPlanformArea,
-    "meanAerodynamicChord": hTailMeanAerodynamicChord,
-    "aspectRatio": hTailaspectRatio,
-    "taperRatio": hTailTaperRatio,
-    "sweep": hTailSweep,
-    "QFactor": Q_TAIL,
-    "toverc": TAIL_THICKNESS,
-}
+wingGeometry["wing"] = wingGeoData
+wingGeometry["hTail"] = hTailGeoData
 wingGeometry["vTail"] = {
     "rootChord": vTailRootChord,
     "tipChord": vTailTipChord,
