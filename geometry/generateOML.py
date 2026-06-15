@@ -30,38 +30,64 @@ from writeOASMesh import writeOASMesh
 spanIndex = wingGeometry["spanIndex"]
 chordIndex = wingGeometry["chordIndex"]
 
+
+def generateOML(partName: str):
+    airfoilFiles = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), file)
+        for file in wingGeometry[partName]["sectionProfiles"]
+    ]
+
+    # Airfoil rotations, this is a bit complicated because the wing we want to make is not in the orientation pyGeo expects
+    rot_x = [90.0, 90.0]
+    rot_y = wingGeometry[partName]["sectionTwist"]
+    rot_z = [0.0, 0.0]
+
+    surface = pyGeo(
+        "liftingSurface",
+        xsections=airfoilFiles,
+        scale=wingGeometry[partName]["sectionChord"],
+        X=wingGeometry[partName]["LECoords"],
+        rotX=rot_x,
+        rotY=rot_y,
+        rotZ=rot_z,
+        # tip="pinched",
+        bluntTe=True,
+        squareTeTip=False,
+        teHeight=wingGeometry[partName]["teHeight"],
+    )
+
+    surface.writeTecplot(f"{partName}.dat")
+    surface.writeIGES(f"{partName}.igs")
+    surface.writeTin(f"{partName}.tin")
+    return surface
+
+
+def generateVLMMesh(
+    surface: pyGeo, LEList: np.ndarray, TEList: np.ndarray, numSpanPanels: int, numChordPanels: int, meshName: str
+):
+    vlmMesh = createMidsurfaceMesh(
+        surface,
+        surfFormat="point-vector",
+        leList=LEList,
+        teList=TEList,
+        nSpan=[n + 1 for n in numSpanPanels],
+        nChord=numChordPanels + 1,
+        liftIndex=wingGeometry["verticalIndex"] + 1,
+        chordCosSpacing=0.75,
+    )
+
+    # OpenAeroStruct expects the mesh to be order tip to root for some godforsaken reason, so flip the spanwise axis
+    vlmMesh = np.flip(vlmMesh, 1)
+    np.save(f"../aero/{meshName}.npy", vlmMesh)
+    writeOASMesh(vlmMesh, f"{meshName}.dat")
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--ffdType", type=str, choices=["basic", "advanced", "none"], default="advanced")
 args = parser.parse_args()
 
-airfoilFiles = [
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), file) for file in wingGeometry["wing"]["sectionProfiles"]
-]
-
-# Airfoil rotations, this is a bit complicated because the wing we want to make is not in the orientation pyGeo expects
-rot_x = [90.0, 90.0]
-rot_y = wingGeometry["wing"]["sectionTwist"]
-rot_z = [0.0, 0.0]
-
-wingSurface = pyGeo(
-    "liftingSurface",
-    xsections=airfoilFiles,
-    scale=wingGeometry["wing"]["sectionChord"],
-    x=wingGeometry["wing"]["LECoords"][:, 0],
-    y=wingGeometry["wing"]["LECoords"][:, 1],
-    z=wingGeometry["wing"]["LECoords"][:, 2],
-    rotX=rot_x,
-    rotY=rot_y,
-    rotZ=rot_z,
-    # tip="pinched",
-    bluntTe=True,
-    squareTeTip=False,
-    teHeight=wingGeometry["wing"]["teHeight"],
-)
-
-wingSurface.writeTecplot("wing.dat")
-wingSurface.writeIGES("wing.igs")
-wingSurface.writeTin("wing.tin")
+wingSurface = generateOML("wing")
+tailSurface = generateOML("hTail")
 
 # ==============================================================================
 # Create VLM meshes
@@ -90,23 +116,23 @@ numSpanPanels = [
     [4, 32],
 ]
 for ii in range(len(numSpanPanels)):
-    vlmMesh = createMidsurfaceMesh(
+    generateVLMMesh(
         wingSurface,
-        surfFormat="point-vector",
-        leList=wingLEList,
-        teList=wingTEList,
-        nSpan=[n + 1 for n in numSpanPanels[ii]],
-        nChord=numChordPanels[ii] + 1,
-        liftIndex=wingGeometry["verticalIndex"] + 1,
-        chordCosSpacing=0.75,
+        wingLEList,
+        wingTEList,
+        numSpanPanels=numSpanPanels[ii],
+        numChordPanels=numChordPanels[ii],
+        meshName=f"wing-VLMSurf-L{3 - ii}",
     )
-
-    # OpenAeroStruct expects the mesh to be order tip to root for some godforsaken reason, so flip the spanwise axis
-    vlmMesh = np.flip(vlmMesh, 1)
-    meshName = f"wing-VLMSurf-L{3 - ii}"
-    np.save(f"../aero/{meshName}.npy", vlmMesh)
-    writeOASMesh(vlmMesh, f"{meshName}.dat")
-
+    generateVLMMesh(
+        tailSurface,
+        wingGeometry["hTail"]["LECoords"],
+        wingGeometry["hTail"]["TECoords"],
+        numSpanPanels=[numSpanPanels[ii][-1] // 2],
+        numChordPanels=numChordPanels[ii],
+        meshName=f"hTail-VLMSurf-L{3 - ii}",
+    )
+exit(0)
 # ==============================================================================
 # Generate FFDs
 # ==============================================================================
