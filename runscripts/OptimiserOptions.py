@@ -85,9 +85,9 @@ def getOptOptions(
             "quasi_newton_memory_size": hessianUpdate,
             "max_iterations": majIterLimit,
         }
-        for presets in ["filtersqp", "filterslp", "funnelsqp", "ipopt"]:
-            if presets in alg.lower():
-                commonOptions["presets"] = presets
+        for preset in ["filtersqp", "filterslp", "funnelsqp", "ipopt"]:
+            if preset in alg.lower():
+                commonOptions["preset"] = preset
                 break
         return commonOptions
 
