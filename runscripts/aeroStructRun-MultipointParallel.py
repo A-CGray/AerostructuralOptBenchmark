@@ -135,9 +135,7 @@ parser.add_argument(
 parser.add_argument(
     "--flightPointSet", type=str, default="mnver_sealevel_va_pullup", choices=list(flightPointSets.keys())
 )
-parser.add_argument(
-    "--vlmFlightPoints", nargs="*", default=["mnver_sealevel_va_pullup"], help="List of flight points to use VLM for"
-)
+parser.add_argument("--vlmFlightPoints", nargs="*", default=[], help="List of flight points to use VLM for")
 parser.add_argument(
     "--procs",
     type=int,
@@ -206,6 +204,7 @@ parser.add_argument(
 
 # --- Aero options ---
 parser.add_argument("--aeroLevel", type=int, default=3, choices=[1, 2, 3])
+parser.add_argument("--vlmLevel", type=int, default=None, choices=[1, 2, 3])
 parser.add_argument(
     "--aeroTol",
     type=float,
@@ -374,6 +373,8 @@ usingVLM = localFlightPoint.name in args.vlmFlightPoints
 # Define location of input files
 structMeshFile = getStructMeshPath(level=args.structLevel, order=args.structOrder)
 
+if usingVLM and args.vlmLevel is not None:
+    args.aeroLevel = args.vlmLevel
 aeroMeshFile = getAeroMeshPath(level=args.aeroLevel, useVLM=usingVLM)
 
 ffdFile = getFFDPath(level=args.ffdLevel)
@@ -802,24 +803,33 @@ class AnalysisPoint(Multipoint):
         # ADflow computes the lift/drag of the single wing, the outputs are not promoted and are called "lift" and "drag"
         # OpenAerostruct computes the lift and drag for 2 wings, the outputs are promoted and are called "L" and "D"
 
-        # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
-        if usingVLM:
-            scaleFactor = 0.5
-            inputNames = [f"{self.fpName}.L", f"{self.fpName}.D"]
-        else:
-            scaleFactor = 1.0
-            inputNames = [f"{self.fpName}.aero_post.lift", f"{self.fpName}.aero_post.drag"]
+        if isAeroStruct:
+            aeroForces = ["Lift"]
+            if isCruisePoint:
+                aeroForces.append("Drag")
 
-        for outputName, inputName in zip(["Lift", "Drag"], inputNames, strict=True):
-            self.add_subsystem(
-                f"{outputName}CorrectionComp",
-                om.ExecComp(
-                    f"{getAeroForceName(self.fpName, outputName)} = {scaleFactor} * F",
-                    units="N",
-                ),
-                promotes_outputs=["*"],
-            )
-            self.connect(inputName, f"{outputName}CorrectionComp.F")
+            # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
+            if usingVLM:
+                scaleFactor = 0.5
+                inputNames = [
+                    f"{self.fpName}.{f[0].upper()}" for f in aeroForces
+                ]  # [f"{self.fpName}.L", f"{self.fpName}.D"]
+            else:
+                scaleFactor = 1.0
+                inputNames = [
+                    f"{self.fpName}.aero_post.{f.lower()}" for f in aeroForces
+                ]  # [f"{self.fpName}.aero_post.lift", f"{self.fpName}.aero_post.drag"]
+
+            for outputName, inputName in zip(aeroForces, inputNames, strict=True):
+                self.add_subsystem(
+                    f"{outputName}CorrectionComp",
+                    om.ExecComp(
+                        f"{getAeroForceName(self.fpName, outputName)} = {scaleFactor} * F",
+                        units="N",
+                    ),
+                    promotes_outputs=["*"],
+                )
+                self.connect(inputName, f"{outputName}CorrectionComp.F")
 
         if isAeroStruct:
             # ==============================================================================
@@ -989,8 +999,6 @@ class AnalysisPoint(Multipoint):
                 scenario.coupling.aero.mphys_set_ap(fp)
                 scenario.aero_post.mphys_set_ap(fp)
                 alphaDVName = f"{self.fpName}_AOA"
-                dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
-                self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
                 self.connect(
                     alphaDVName,
                     [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
@@ -1125,6 +1133,11 @@ if structOnlyOpt or args.task == "trim":
 elif args.optType == "fuelburn":
     if isCruisePoint:
         flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
+elif args.optType == "pareto":
+    if isCruisePoint:
+        flightPointProb.model.add_objective("paretoObj", scaler=1.0, cache_linear_solution=True)
+else:
+    raise ValueError("No objective function defined")
 
 # ==============================================================================
 # Setup constraints
@@ -1804,7 +1817,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     objectives.update(performanceProb.model.get_objectives())
 
     for obj in objectives.values():
-        optProb.addObj(obj["name"], scale=obj["scaler"])
+        optProb.addObj(obj["name"], scale=obj["scaler"] if obj["scaler"] is not None else 1.0)
 
     # Print out some useful info about the optimization problem
     if ptRank == 0:
