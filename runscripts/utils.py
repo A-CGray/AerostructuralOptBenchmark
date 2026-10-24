@@ -183,7 +183,7 @@ def writeOutputs(prob: om.Problem, outputDir: str, fileName: Optional[str] = Non
     for output in outputs:
         try:
             data = prob.get_val(output)
-            if not hasattr(data, "__len__") or len(data) < 10000:
+            if np.size(data) < 10000:
                 outputData[output] = data
         except TypeError:
             pass
