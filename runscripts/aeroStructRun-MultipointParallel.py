@@ -1496,7 +1496,7 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     # Print out some interesting values
     if ptRank == 0:
         for funcName, funcVal in funcs.items():
-            if hasattr(funcVal, "__len__") and len(funcVal) > 100:
+            if np.size(funcVal) > 100:
                 print(f"{funcName}: max={np.max(funcVal)}, min={np.min(funcVal)}", flush=True)
             else:
                 print(f"{funcName}: {funcVal}", flush=True)
@@ -2096,7 +2096,7 @@ outputData = {}
 for output in outputs:
     try:
         data = flightPointProb.get_val(output)
-        if not hasattr(data, "__len__") or len(data) < 10000:
+        if np.size(data) < 10000:
             outputData[output] = data
     except TypeError:
         pass
