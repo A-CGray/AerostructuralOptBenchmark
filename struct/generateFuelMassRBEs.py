@@ -61,7 +61,6 @@ compDescripts = meshLoader.getComponentDescripts()
 structGroups = ["U_SKIN", "L_SKIN", "RIB", "SPAR.00", "SPAR.01"]
 
 # Get the compIDs for each group and sort them in from root to tip
-#
 componentData = {}
 
 for groupName in structGroups:

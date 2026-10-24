@@ -63,7 +63,18 @@ parser.add_argument(
     "--optimiser",
     type=str,
     default="snopt",
-    choices=["snopt", "ipopt", "nlpqlp", "paroptsl1", "paroptfilter", "paroptmma"],
+    choices=[
+        "snopt",
+        "ipopt",
+        "nlpqlp",
+        "paroptsl1",
+        "paroptfilter",
+        "paroptmma",
+        "uno-filtersqp",
+        "uno-filterslp",
+        "uno-funnelsqp",
+        "uno-ipopt",
+    ],
 )
 parser.add_argument("--optIter", type=int, default=1000)
 parser.add_argument("--hessianUpdate", type=int, default=40)

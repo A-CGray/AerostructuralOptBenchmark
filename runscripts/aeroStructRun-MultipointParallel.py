@@ -1893,7 +1893,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # Run the optimisation
     # ==============================================================================
     if args.task == "trim":
-        sol = sol = optimiser(
+        sol = optimiser(
             optProb,
             MP.sens,
             storeHistory=optHistFilename,

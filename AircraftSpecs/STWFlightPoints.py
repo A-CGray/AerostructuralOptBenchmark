@@ -168,6 +168,8 @@ flightPointSets = {
     "mnver_highAlt_vc_pushdown": [highAltHighSpeedPushDown],
     "buffet_high_lift": [buffetHighLift],
     "buffet_high_speed": [buffetHighSpeed],
+    "taxi_bump_positive": [taxiBumpPositive],
+    "taxi_bump_negative": [taxiBumpNegative],
     "3pt": [standardCruise, seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
     "2pt": [standardCruise, seaLevelLowSpeedPullUp],
     "2ptmaneuver": [seaLevelLowSpeedPullUp, seaLevelLowSpeedPushDown],
