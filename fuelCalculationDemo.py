@@ -58,7 +58,7 @@ class Group(om.Group):
                 fuelDensity=aircraftSpecs["fuelDensity"],
                 wingboxVolumeFraction=aircraftSpecs["wingboxFuelVolumeFraction"],
                 numRibBays=numBays,
-                maxSmoothingRelError=1e-1,
+                maxSmoothingRelError=1e-2,
             ),
             promotes=["*"],
         )
@@ -92,4 +92,4 @@ niceplots.adjust_spines(ax)
 niceplots.label_line_ends(ax)
 ax.set_xlabel("Total Fuel Mass (kg)")
 ax.set_ylabel("Rib Bay Fuel Mass (kg)")
-niceplots.save_figs(fig, "fuelDistributionDemo", ["pdf", "png"])
+niceplots.save_figs(fig, "fuelDistributionDemo", ["pdf", "png", "svg"])

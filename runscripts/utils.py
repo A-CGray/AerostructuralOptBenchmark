@@ -4,7 +4,7 @@
 import re
 import os
 import sys
-from typing import Optional
+from typing import Optional, Union
 
 # ==============================================================================
 # External Python modules
@@ -92,7 +92,27 @@ def saveRunCommand(parser, args, outputDir):
             f.write(command)
 
 
-def setValsFromFiles(files, prob):
+def setValsFromFiles(files: Union[list[str], str], prob: om.Problem) -> None:
+    """Set input values of an OpenMDAO problem from one of the following file types:
+
+    - pyOptSparse history file (.hst)
+    - OpenMDAO case recorder (.sql)
+    - OpenMDAO outputs pickled dictionary (.pkl)
+
+    Parameters
+    ----------
+    files : str or list of str
+        File(s) to set values from. If multiple files are provided, values will be set from each file in the order they are provided, with later files overwriting values set from earlier files if there are any conflicts
+    prob : om.Problem
+        The OpenMDAO problem to set values for
+
+    Raises
+    ------
+    ValueError
+        If a file type is provided that is not .hst, .sql or .pkl
+    """
+    if isinstance(files, str):
+        files = [files]
     model = prob.model
     if prob.comm.rank == 0:
         print("\n===============================================================================")
@@ -140,7 +160,7 @@ def setValsFromFiles(files, prob):
         print("===============================================================================\n")
 
 
-def writeOutputs(prob, outputDir, fileName="Outputs"):
+def writeOutputs(prob: om.Problem, outputDir: str, fileName: Optional[str] = None) -> None:
     """Write the outputs of an OpenMDAO model to a pickle
 
     Any outputs with more than 10000 elements will not be written to avoid storing states of large solvers etc
@@ -149,9 +169,13 @@ def writeOutputs(prob, outputDir, fileName="Outputs"):
     ----------
     prob : OpenMDAO Problem
         The problem to write the outputs from
-    outputDir : _type_
-        _description_
+    outputDir : str
+        The directory to write the outputs to
+    fileName : str, optional
+        The name of the file to write the outputs to, by default "Outputs"
     """
+    if fileName is None:
+        fileName = "Outputs"
     outputs = prob.model.list_outputs(return_format="dict", print_arrays=False, excludes=["*_vol_coords", "*_states"])
     if prob.model.comm.rank == 0:
         print(outputs)
@@ -159,7 +183,7 @@ def writeOutputs(prob, outputDir, fileName="Outputs"):
     for output in outputs:
         try:
             data = prob.get_val(output)
-            if not hasattr(data, "__len__") or len(data) < 10000:
+            if np.size(data) < 10000:
                 outputData[output] = data
         except TypeError:
             pass

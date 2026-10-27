@@ -483,7 +483,7 @@ class FuelDistributionComp(om.JaxExplicitComponent):
         self.add_input("bayVolumes", shape=self.options["numRibBays"], units="m**3")
         self.add_input("fuelMass", units="kg")
         self.add_output("bayFuelMasses", copy_shape="bayVolumes", units="kg")
-        self.add_output("wingboxVolume")
+        self.add_output("wingboxVolume", shape=())
 
     def get_self_statics(self):
         return (

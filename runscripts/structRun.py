@@ -421,6 +421,10 @@ elif args.task == "opt":
         "nlpqlp": "NLPQLP",
         "snopt": "SNOPT",
         "ipopt": "IPOPT",
+        "uno-filtersqp": "Uno",
+        "uno-filterslp": "Uno",
+        "uno-funnelsqp": "Uno",
+        "uno-ipopt": "Uno",
     }
     prob.driver = om.pyOptSparseDriver(
         optimizer=optimiserMap[args.optimiser],
