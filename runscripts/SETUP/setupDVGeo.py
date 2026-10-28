@@ -195,6 +195,24 @@ def setupDVGeo(
         if addGeoDVs:
             top.add_design_var(dvName, lower=-10.0, upper=10.0, scaler=dvScaleFactor * 1)
 
+    if args.xShift:
+        dvName = "xShift"
+
+        def xShift(val, geo):
+            C = geo.extractCoef("wing")
+            for i in range(numRefAxPts):
+                C[i, chordIndex] += val[0]
+            geo.restoreCoef(C, "wing")
+
+        DVGeoComp.nom_addGlobalDV(dvName=dvName, value=0.0, func=xShift)
+        try:
+            dvComponent.add_output(dvName, val=0.0, units=None)
+        except ValueError:
+            pass
+        top.connect(dvName, f"{geoCompName}.{dvName}")
+        if addGeoDVs:
+            top.add_design_var(dvName, lower=-10.0, upper=10.0, scaler=dvScaleFactor * 1)
+
     if args.shape:
         dvName = "local"
 
@@ -387,3 +405,20 @@ def setupDVGeo(
             # to stop the optimiser thinning out the trailing edge of the wing too much, which is a common issue
             DVGeoComp.nom_addThicknessConstraints2D("TEThickness", TESparCoords, TECoords, nSpan=20, nChord=20)
             top.add_constraint(f"{geoCompName}.TEThickness", lower=0.5)
+        if args.addLandingGearCon:
+            # Constraint that the rear spar of the centre wingbox cannot move any further backward than its original location
+            centreBoxTECoords = wingGeometry["wingbox"]["TESparCoords"][:2]
+            lowerBound = list(centreBoxTECoords.flatten())
+            for ii in range(len(lowerBound)):
+                if ii % 3 != chordInd:
+                    lowerBound[ii] = None
+            numPoints = 2
+            DVGeoComp.nom_addLocationConstraints1D(
+                "",
+                centreBoxTECoords,
+                numPoints,
+                lower=lowerBound,
+                upper=[None, None, None] * numPoints,
+                scaled=False,
+                scale=1.0,
+            )

@@ -19,6 +19,7 @@ import os
 # ==============================================================================
 from wimpresscalc import WimpressCalc, WimpressCalcComp, WimpressCoordsComp
 import numpy as np
+import openmdao.api as om
 
 # ==============================================================================
 # Extension modules
@@ -27,7 +28,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../
 from wingGeometry import wingGeometry  # noqa: E402
 
 
-def setupWimpress():
+def setupWimpress(addLandingGearCon=False):
     liftIndex = wingGeometry["verticalIndex"] + 1
     spanIndex = wingGeometry["spanIndex"]
 
@@ -52,7 +53,53 @@ def setupWimpress():
     wp = WimpressCalc(liftIndex=liftIndex)
     wp.addTrapSegment(leadingEdges=leCoords, trailingEdges=teCoords, nSegment=10)
 
+    # Add landing gear station
+    if addLandingGearCon:
+        wp.addSpanwiseStation(location=wingGeometry["wing"]["landingGearSpan"], name="LandingGear", isRelative=False)
+
     return wp, WimpressCalcComp(wimpresscalc=wp), WimpressCoordsComp(wimpresscalc=wp)
+
+
+class PlanformConGroup(om.Group):
+    def initialize(self):
+        self.options.declare("wingGeometry", types=dict)
+
+    def setup(self):
+        wingGeometry = self.options["wingGeometry"]
+
+        # MAC location/CG constraints
+        forwardCGComp = om.AddSubtractComp(
+            output_name="forwardCGX",
+            input_names=["xLEMAC", "MAC"],
+            scaling_factors=[1.0, wingGeometry["forwardCGMAC"]],
+        )
+
+        self.add_subsystem("forwardCGComp", forwardCGComp, promotes=("*"))
+
+        aftCGComp = om.AddSubtractComp(
+            output_name="aftCGX",
+            input_names=["xLEMAC", "MAC"],
+            scaling_factors=[1.0, wingGeometry["aftCGMAC"]],
+        )
+
+        self.add_subsystem("aftCGComp", aftCGComp, promotes=("*"))
+
+        # Landing gear constraints
+        landingGearTESparComp = om.AddSubtractComp(
+            output_name="landingGearTESparX",
+            input_names=["LandingGear", "MAC"],
+            scaling_factors=[1.0, wingGeometry["wingbox"]["TESparFrac"]],
+        )
+
+        self.add_subsystem("landingGearTESparComp", landingGearTESparComp, promotes=("*"))
+
+        landingGearTEComp = om.AddSubtractComp(
+            output_name="landingGearTEX",
+            input_names=["LandingGear", "MAC"],
+            scaling_factors=[1.0, 1.0],
+        )
+
+        self.add_subsystem("landingGearTEComp", landingGearTEComp, promotes=("*"))
 
 
 if __name__ == "__main__":

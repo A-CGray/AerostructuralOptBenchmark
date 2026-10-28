@@ -60,7 +60,7 @@ import SETUP.setupTACS as setupTACS
 from SETUP.setupDVGeo import setupDVGeo
 from SETUP.setupADflow import getADflowOptions
 from SETUP.setupIDWarp import getIDWarpOptions
-from SETUP.setupWimpress import setupWimpress
+from SETUP.setupWimpress import setupWimpress, PlanformConGroup
 from CommonArgs import parser
 from OptimiserOptions import getOptOptions
 from utils import (
@@ -724,7 +724,7 @@ class AnalysisPoint(Multipoint):
             # ==============================================================================
             # WimpressCalc Setup
             # ==============================================================================
-            wimpressCalc, wimpressCalcComp, wimpressCoordsComp = setupWimpress()
+            wimpressCalc, wimpressCalcComp, _ = setupWimpress(addLandingGearCon=args.addLandingGearCon)
             if globalRank == 0:
                 wimpressCalc.writeTecplot(os.path.join(outputDir, "wimpressCalcInit.dat"))
             # Because the WimpressCalc component isn't following the MPhys convention we can just add the wimpress
@@ -733,6 +733,11 @@ class AnalysisPoint(Multipoint):
             # with the geometry component don't exist yet (they're created in its setup method), so we'll add the pointset
             # and connect things in configure instead.
             self.add_subsystem("PlanformValues", wimpressCalcComp)
+
+            if args.addLandingGearCon:
+                wimpressFuncs = {}
+                wimpressCalc.evalFunctions(wimpressFuncs)
+                self.add_subsystem(PlanformConGroup(wingGeometry=wingGeometry))
 
         # ==============================================================================
         # Add TACS dvs
@@ -1188,15 +1193,24 @@ if args.task != "trim":
         # will affect the fuel tank volume
         if includeFuelVolumeConstraint:
             performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
-        # --- Wing loading constraint ---
-        if isCruisePoint and (args.span or args.taper):
-            # This constraint should only be applied if the optimiser has control over the wing planform
-            flightPointProb.model.add_constraint(
-                "wingLoading",
-                upper=args.maxWingLoading,
-                scaler=1.0 / args.maxWingLoading,
-                cache_linear_solution=True,
-            )
+        # --- Planform constraints ---
+        if isCruisePoint:
+            if args.span or args.taper:
+                # This constraint should only be applied if the optimiser has control over the wing area
+                flightPointProb.model.add_constraint(
+                    "wingLoading",
+                    upper=args.maxWingLoading,
+                    scaler=1.0 / args.maxWingLoading,
+                    cache_linear_solution=True,
+                )
+
+            if args.addLandingGearCon and (args.span or args.taper or args.sweep):
+                # This constraint should only be applied if the optimiser has control over the wing planform
+                # The centre wingbox TE spar location constraint is already handled by DVCon, here we just need to constrain that, at the landing gear spanwise coordinate:
+                # - TE chordwise coordinate must be at least it's initial value
+                # - TE Spar coordinate must be at least it's initial value
+                wimpressFuncs = None
+
     # --- Buffet constraints ---
     if "buffet" in localFlightPoint.name.lower():
         flightPointProb.model.add_constraint(
@@ -1893,6 +1907,16 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # Run the optimisation
     # ==============================================================================
     if args.task == "trim":
+        if args.optimizer == "SNOPT":
+            optimiser.setOption("Major feasibility tolerance", 1e-4)
+            optimiser.setOption("Major Step Limit", 1e30)  # Try to avoid major step limit as much as possible
+            optimiser.setOption("Linesearch tolerance", 1.0)  # Try to avoid linesearch as much as possible
+            optimiser.setOption(
+                "Penalty parameter", 1e3
+            )  # Jack up the penalty parameter so that SNOPT only cares about satisfying constraints, not the DV change norm objective that SNOPT uses in "Feasible point" mode
+            optimiser.setOption(
+                "Feasible point", None
+            )  # Run in feasible point mode to tell SNOPT to ignore the objective
         sol = optimiser(
             optProb,
             MP.sens,
