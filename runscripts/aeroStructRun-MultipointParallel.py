@@ -29,6 +29,7 @@ import fnmatch
 import sys
 from pprint import pprint as pp
 import time
+import copy
 
 # ==============================================================================
 # External Python modules
@@ -2010,104 +2011,105 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         analyticSens, _ = sens(origDVs, origFuncs)
 
         # Exclude the large outputs (geometric and panel length constraints) from the derivative check, I'm confident they're accurate
-        # outputsToTest = [func for func in origFuncs if len(origFuncs[func]) < 10]
+        outputsToTest = [func for func in origFuncs if len(origFuncs[func]) < 10]
 
-        # # FD settings
-        # stepSize = 1e-4
-        # directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
+        # FD settings
+        stepSize = 1e-4
+        directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
 
-        # fdSens = {}
-        # for func in outputsToTest:
-        #     fdSens[func] = {}
+        fdSens = {}
+        for func in outputsToTest:
+            fdSens[func] = {}
 
-        # dvScales = {}
-        # for dvName, dvs in optProb.variables.items():
-        #     numDV = len(dvs)
-        #     dvScales[dvName] = np.ones(numDV)
-        #     for ii in range(numDV):
-        #         if dvs[ii].scale is not None:
-        #             dvScales[dvName][ii] = dvs[ii].scale
+        dvScales = {}
+        for dvName, dvs in optProb.variables.items():
+            numDV = len(dvs)
+            dvScales[dvName] = np.ones(numDV)
+            for ii in range(numDV):
+                if dvs[ii].scale is not None:
+                    dvScales[dvName][ii] = dvs[ii].scale
 
-        #     testDirectional = numDV > directionalThreshold
+            testDirectional = numDV > directionalThreshold
 
-        # for func in outputsToTest:
-        #     outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
-        #     inpSize = 1 if testDirectional else numDV
-        #     fdSens[func][dvName] = np.zeros((outputSize, inpSize))
+        for func in outputsToTest:
+            outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
+            inpSize = 1 if testDirectional else numDV
+            fdSens[func][dvName] = np.zeros((outputSize, inpSize))
 
-        #     if testDirectional:
-        #         if ptRank == 0:
-        #             print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
-        #         pertDVs = copy.deepcopy(origDVs)
-        #         dvPertSize = stepSize / dvScales[dvName]
-        #         dvPert = stepSize / dvScales[dvName]
-        #         pertDVs[dvName] += dvPert
+            if testDirectional:
+                if ptRank == 0:
+                    print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
+                pertDVs = copy.deepcopy(origDVs)
+                dvPertSize = stepSize / dvScales[dvName]
+                dvPert = stepSize / dvScales[dvName]
+                pertDVs[dvName] += dvPert
 
-        #         pertFuncs, _ = obj(pertDVs)
-        #         pertDVs[dvName] -= 2 * dvPert
-        #         pertFuncs2, _ = obj(pertDVs)
+                pertFuncs, _ = obj(pertDVs)
+                pertDVs[dvName] -= 2 * dvPert
+                pertFuncs2, _ = obj(pertDVs)
 
-        #     for func in outputsToTest:
-        #         fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
-        # else:
-        #     for ii in range(numDV):
-        #         if ptRank == 0:
-        #             print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
-        #         pertDVs = copy.deepcopy(origDVs)
-        #         dvPert = stepSize / dvScales[dvName][ii]
-        #         pertDVs[dvName][ii] += dvPert
+            for func in outputsToTest:
+                fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
 
-        #             pertFuncs, _ = obj(pertDVs)
-        #             pertDVs[dvName][ii] -= 2 * dvPert
-        #             pertFuncs2, _ = obj(pertDVs)
+            else:
+                for ii in range(numDV):
+                    if ptRank == 0:
+                        print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
+                    pertDVs = copy.deepcopy(origDVs)
+                    dvPert = stepSize / dvScales[dvName][ii]
+                    pertDVs[dvName][ii] += dvPert
 
-        #             for func in outputsToTest:
-        #                 fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
+                    pertFuncs, _ = obj(pertDVs)
+                    pertDVs[dvName][ii] -= 2 * dvPert
+                    pertFuncs2, _ = obj(pertDVs)
 
-        # derivCheckData = {}
-        # for func in outputsToTest:
-        #     derivCheckData[func] = {}
-        #     if ptRank == 0:
-        #         print(f"\n\nDerivative check for function {func}:", flush=True)
+                    for func in outputsToTest:
+                        fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
 
-        #     if func not in analyticSens:
-        #         if ptRank == 0:
-        #             print(f"  No analytic derivatives found for {func}", flush=True)
-        #         continue
-        #     for dvName in fdSens[func]:
-        #         if ptRank == 0:
-        #             print(f"  DV: {dvName}", flush=True)
+        derivCheckData = {}
+        for func in outputsToTest:
+            derivCheckData[func] = {}
+            if ptRank == 0:
+                print(f"\n\nDerivative check for function {func}:", flush=True)
 
-        #         fd = fdSens[func][dvName]
-        #         if dvName in analyticSens[func]:
-        #             analytic = analyticSens[func][dvName]
-        #         else:
-        #             if ptRank == 0:
-        #                 print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
-        #             continue
-        #         derivCheckData[func][dvName] = {
-        #             "analytic": analytic,
-        #             "fd": fd,
-        #         }
-        #         if analytic.shape != fd.shape:
-        #             analyticSensProd = analytic @ (1 / dvScales[dvName])
-        #             derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
-        #             absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
-        #             relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
-        #         else:
-        #             absError = np.abs(analytic - fd)
-        #             relError = absError / (np.abs(fd) + 1e-16)
-        #         derivCheckData[func][dvName]["absError"] = absError
-        #         derivCheckData[func][dvName]["relError"] = relError
+            if func not in analyticSens:
+                if ptRank == 0:
+                    print(f"  No analytic derivatives found for {func}", flush=True)
+                continue
+            for dvName in fdSens[func]:
+                if ptRank == 0:
+                    print(f"  DV: {dvName}", flush=True)
 
-        #         if ptRank == 0:
-        #             for key, val in derivCheckData[func][dvName].items():
-        #                 print(f"    {key:>25}: {val}", flush=True)
+                fd = fdSens[func][dvName]
+                if dvName in analyticSens[func]:
+                    analytic = analyticSens[func][dvName]
+                else:
+                    if ptRank == 0:
+                        print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
+                    continue
+                derivCheckData[func][dvName] = {
+                    "analytic": analytic,
+                    "fd": fd,
+                }
+                if analytic.shape != fd.shape:
+                    analyticSensProd = analytic @ (1 / dvScales[dvName])
+                    derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
+                    absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
+                    relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
+                else:
+                    absError = np.abs(analytic - fd)
+                    relError = absError / (np.abs(fd) + 1e-16)
+                derivCheckData[func][dvName]["absError"] = absError
+                derivCheckData[func][dvName]["relError"] = relError
 
-        # if globalRank == 0:
-        #     outFileName = os.path.join(outputDir, "DerivCheck.pkl")
-        #     with open(outFileName, "wb") as f:
-        #         dill.dump(derivCheckData, f, protocol=-1)
+                if ptRank == 0:
+                    for key, val in derivCheckData[func][dvName].items():
+                        print(f"    {key:>25}: {val}", flush=True)
+
+        if globalRank == 0:
+            outFileName = os.path.join(outputDir, "DerivCheck.pkl")
+            with open(outFileName, "wb") as f:
+                dill.dump(derivCheckData, f, protocol=-1)
 
 
 # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
