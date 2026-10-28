@@ -2011,7 +2011,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         analyticSens, _ = sens(origDVs, origFuncs)
 
         # Exclude the large outputs (geometric and panel length constraints) from the derivative check, I'm confident they're accurate
-        outputsToTest = [func for func in origFuncs if len(origFuncs[func]) < 10]
+        outputsToTest = [func for func in origFuncs if np.size(origFuncs[func]) < 10]
 
         # FD settings
         stepSize = 1e-4
@@ -2031,10 +2031,10 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
 
             testDirectional = numDV > directionalThreshold
 
-        for func in outputsToTest:
-            outputSize = len(origFuncs[func]) if hasattr(origFuncs[func], "__len__") else 1
-            inpSize = 1 if testDirectional else numDV
-            fdSens[func][dvName] = np.zeros((outputSize, inpSize))
+            for func in outputsToTest:
+                outputSize = np.size(origFuncs[func])
+                inpSize = 1 if testDirectional else numDV
+                fdSens[func][dvName] = np.zeros((outputSize, inpSize))
 
             if testDirectional:
                 if ptRank == 0:
@@ -2048,8 +2048,8 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                 pertDVs[dvName] -= 2 * dvPert
                 pertFuncs2, _ = obj(pertDVs)
 
-            for func in outputsToTest:
-                fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
+                for func in outputsToTest:
+                    fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
 
             else:
                 for ii in range(numDV):
@@ -2094,7 +2094,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                 if analytic.shape != fd.shape:
                     analyticSensProd = analytic @ (1 / dvScales[dvName])
                     derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
-                    absError = analyticSensProd - fd.reshape(analyticSensProd.shape)
+                    absError = np.abs(analyticSensProd - fd.reshape(analyticSensProd.shape))
                     relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
                 else:
                     absError = np.abs(analytic - fd)
