@@ -54,7 +54,7 @@ def setupWimpress(addLandingGearCon=False):
     leCoords = np.vstack((leCoords[0], SOBLECoord, leCoords[1:]))
 
     wp = WimpressCalc(liftIndex=liftIndex)
-    wp.addTrapSegment(leadingEdges=leCoords, trailingEdges=teCoords, nSegment=10)
+    wp.addTrapSegment(leadingEdges=leCoords, trailingEdges=teCoords, nSegment=1)
 
     # Add landing gear station
     if addLandingGearCon:
