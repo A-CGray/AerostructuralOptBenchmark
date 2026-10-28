@@ -199,7 +199,11 @@ def whereAmIRunning():
     Returns
     -------
     str
-        "albert" if running on my machine Albert, "greatlakes" if running on Great Lakes, "stampede" if running on Stampede2
+        One of the following:
+        - "albert" if running on my local machine Albert
+        - "greatlakes": the UM Great Lakes cluster
+        - "stampede": the UTACC Stampede3 cluster
+        - "hecc": the NASA HECC cluster
     """
     NASNodePattern = "r[0-9]{1,3}i[0-9]n[0-9]{1,3}$"
     uname = os.uname()[1]
@@ -207,7 +211,7 @@ def whereAmIRunning():
         return "albert"
     elif "arc-ts.umich.edu" in uname:
         return "greatlakes"
-    elif "stampede2.tacc.utexas.edu" in uname:
+    elif "stampede3.tacc.utexas.edu" in uname:
         return "stampede"
     elif "pfe" in uname or len(re.findall(NASNodePattern, uname)) > 0:
         return "hecc"
@@ -218,7 +222,7 @@ def getOutputDir():
     parentDirs = {
         "albert": "/home/ali/BigBoi/ali/AerostructuralOptBenchmark",
         "greatlakes": "/scratch/jrram_root/jrram1/alachris/AerostructuralOptBenchmark",
-        "stampede": "/work2/07488/acgray/stampede2/AerostructuralOptBenchmark",
+        "stampede": "/work2/07488/acgray/stampede3/AerostructuralOptBenchmark",
         "hecc": "/nobackup/achris10/AerostructuralOptBenchmark",
     }
     if machineName in parentDirs:
