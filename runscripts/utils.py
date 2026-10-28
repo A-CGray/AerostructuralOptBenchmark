@@ -344,8 +344,8 @@ def addDesignVarsFromOpenMDAO(optProb, omProb):
             dvName,
             nVars=dv["global_size"],
             value=dv["value"],
-            lower=dv["lower"] / dv["scaler"],
-            upper=dv["upper"] / dv["scaler"],
+            lower=None if dv["lower"] is None else dv["lower"] / dv["scaler"],
+            upper=None if dv["upper"] is None else dv["upper"] / dv["scaler"],
             scale=dv["scaler"],
         )
 
