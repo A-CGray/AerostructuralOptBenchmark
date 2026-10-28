@@ -146,13 +146,26 @@ highLiftData = {
 wingGeoData.update(highLiftData)
 
 # --- Landing gear location ---
-wingGeoData["landingGearSpan"] = 8 * f2m
+landingGearSpan = 8 * f2m
+# Get LE and TE coordinates of the landing gear station
+landingGearLEX = np.interp(landingGearSpan, LECoords[:, spanIndex], LECoords[:, chordIndex])
+landingGearTEX = np.interp(landingGearSpan, TECoords[:, spanIndex], TECoords[:, chordIndex])
+landingGearChord = landingGearTEX - landingGearLEX
+
+wingGeoData.update(
+    {
+        "landingGearSpan": landingGearSpan,
+        "landingGearChord": landingGearChord,
+        "landingGearLEX": landingGearLEX,
+        "landingGearTEX": landingGearTEX,
+    }
+)
 
 # --- CG locations (expressed in % MAC) ---
 wingGeoData["forwardCGMAC"] = 0.12
-wingGeoData["forwardCGCoord"] = 3.50482
+wingGeoData["forwardCGX"] = 3.50482
 wingGeoData["aftCGMAC"] = 0.25
-wingGeoData["aftCGCoord"] = 3.96814
+wingGeoData["aftCGX"] = 3.96814
 
 
 # ==============================================================================
