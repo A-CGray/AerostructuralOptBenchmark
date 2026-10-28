@@ -262,6 +262,7 @@ if args.task == "derivCheck":
 if args.task == "trim":
     args.addStructDVs = False
     args.addGeoDVs = False
+    args.addLandingGearCon = False
 
 # If we're running the setup check, enable everything
 if args.task == "check":
@@ -269,10 +270,12 @@ if args.task == "check":
     args.addStructDVs = True
     args.usePanelLengthDVs = True
     args.useFuelMassDVs = True
+    args.addLandingGearCon = True
     args.twist = True
     args.sweep = True
     args.shape = True
     args.span = True
+    args.xShift = True
     args.dihedral = True
     args.taper = True
 
@@ -738,7 +741,7 @@ class AnalysisPoint(Multipoint):
             if args.addLandingGearCon:
                 wimpressFuncs = {}
                 wimpressCalc.evalFunctions(wimpressFuncs)
-                self.add_subsystem(PlanformConGroup(wingGeometry=wingGeometry))
+                self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
 
         # ==============================================================================
         # Add TACS dvs

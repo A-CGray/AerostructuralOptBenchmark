@@ -414,7 +414,7 @@ def setupDVGeo(
                     lowerBound[ii] = None
             numPoints = 2
             DVGeoComp.nom_addLocationConstraints1D(
-                "",
+                "TESparLocation",
                 centreBoxTECoords,
                 numPoints,
                 lower=lowerBound,

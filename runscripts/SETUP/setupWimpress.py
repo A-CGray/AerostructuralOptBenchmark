@@ -71,35 +71,35 @@ class PlanformConGroup(om.Group):
         forwardCGComp = om.AddSubtractComp(
             output_name="forwardCGX",
             input_names=["xLEMAC", "MAC"],
-            scaling_factors=[1.0, wingGeometry["forwardCGMAC"]],
+            scaling_factors=[1.0, wingGeometry["wing"]["forwardCGMAC"]],
         )
 
-        self.add_subsystem("forwardCGComp", forwardCGComp, promotes=("*"))
+        self.add_subsystem("forwardCGComp", forwardCGComp, promotes=["*"])
 
         aftCGComp = om.AddSubtractComp(
             output_name="aftCGX",
             input_names=["xLEMAC", "MAC"],
-            scaling_factors=[1.0, wingGeometry["aftCGMAC"]],
+            scaling_factors=[1.0, wingGeometry["wing"]["aftCGMAC"]],
         )
 
-        self.add_subsystem("aftCGComp", aftCGComp, promotes=("*"))
+        self.add_subsystem("aftCGComp", aftCGComp, promotes=["*"])
 
         # Landing gear constraints
         landingGearTESparComp = om.AddSubtractComp(
             output_name="landingGearTESparX",
-            input_names=["LandingGear", "MAC"],
+            input_names=["xLE_LandingGear", "chord_LandingGear"],
             scaling_factors=[1.0, wingGeometry["wingbox"]["TESparFrac"]],
         )
 
-        self.add_subsystem("landingGearTESparComp", landingGearTESparComp, promotes=("*"))
+        self.add_subsystem("landingGearTESparComp", landingGearTESparComp, promotes=["*"])
 
         landingGearTEComp = om.AddSubtractComp(
             output_name="landingGearTEX",
-            input_names=["LandingGear", "MAC"],
+            input_names=["xLE_LandingGear", "chord_LandingGear"],
             scaling_factors=[1.0, 1.0],
         )
 
-        self.add_subsystem("landingGearTEComp", landingGearTEComp, promotes=("*"))
+        self.add_subsystem("landingGearTEComp", landingGearTEComp, promotes=["*"])
 
 
 if __name__ == "__main__":

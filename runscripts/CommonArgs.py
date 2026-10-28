@@ -178,6 +178,7 @@ parser.add_argument("--ffdLevel", type=str, default="coarse", choices=["coarse",
 parser.add_argument("--twist", action="store_true")
 parser.add_argument("--shape", action="store_true")
 parser.add_argument("--sweep", action="store_true")
+parser.add_argument("--xShift", action="store_true")
 parser.add_argument("--span", action="store_true")
 parser.add_argument("--dihedral", action="store_true")
 parser.add_argument("--taper", action="store_true")
