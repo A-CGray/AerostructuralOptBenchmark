@@ -150,9 +150,9 @@ wingGeoData["landingGearSpan"] = 8 * f2m
 
 # --- CG locations (expressed in % MAC) ---
 wingGeoData["forwardCGMAC"] = 0.12
-wingGeoData["forwardCGCoord"] = 3.50482
+wingGeoData["forwardCGX"] = 3.50482
 wingGeoData["aftCGMAC"] = 0.25
-wingGeoData["aftCGCoord"] = 3.96814
+wingGeoData["aftCGX"] = 3.96814
 
 
 # ==============================================================================
