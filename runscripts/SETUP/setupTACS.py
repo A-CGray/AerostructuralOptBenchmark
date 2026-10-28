@@ -78,13 +78,13 @@ defaultPanelLengthScale = 1.0
 defaultStiffenerPitch = 0.15  # m
 defaultStiffenerPitchMax = 0.5  # m
 defaultStiffenerPitchMin = 0.15  # m
-defaultStiffenerPitchScale = 1.0
+defaultStiffenerPitchScale = 10.0
 
 # Panel thickness
 defaultPanelThickness = 0.0065  # m
 defaultPanelThicknessMax = 0.1  # m
 defaultPanelThicknessMin = 0.6e-3  # m
-defaultPanelThicknessScale = 100.0
+defaultPanelThicknessScale = 250.0
 
 # ply fraction bounds
 defaultPlyFractionMax = 1.0
@@ -95,13 +95,13 @@ defaultPlyFractionScale = 1.0
 defaultStiffenerHeight = 0.05  # m
 defaultStiffenerHeightMax = 0.15  # m
 defaultStiffenerHeightMin = max(25e-3 * flangeFraction, 18e-3)  # m
-defaultStiffenerHeightScale = 10.0
+defaultStiffenerHeightScale = 20.0
 
 # Stiffener thickness
 defaultStiffenerThickness = 0.006  # m
 defaultStiffenerThicknessMax = 0.1  # m
 defaultStiffenerThicknessMin = 0.6e-3  # m
-defaultStiffenerThicknessScale = 100.0
+defaultStiffenerThicknessScale = 250.0
 
 
 # --- Figure out the rib spacing ---
