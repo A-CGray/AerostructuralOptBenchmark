@@ -31,7 +31,7 @@ LG_STATION_NAME = "LandingGear"
 PLANFORM_CON_INPUT_NAMES = ["MAC", "xLEMAC", f"xLE_{LG_STATION_NAME}", f"chord_{LG_STATION_NAME}"]
 
 
-def setupWimpress(addLandingGearCon=False):
+def setupWimpress(addPlanformCons=False):
     liftIndex = wingGeometry["verticalIndex"] + 1
     spanIndex = wingGeometry["spanIndex"]
 
@@ -57,7 +57,7 @@ def setupWimpress(addLandingGearCon=False):
     wp.addTrapSegment(leadingEdges=leCoords, trailingEdges=teCoords, nSegment=1)
 
     # Add landing gear station
-    if addLandingGearCon:
+    if addPlanformCons:
         wp.addSpanwiseStation(location=wingGeometry["wing"]["landingGearSpan"], name="LandingGear", isRelative=False)
 
     return wp, WimpressCalcComp(wimpresscalc=wp), WimpressCoordsComp(wimpresscalc=wp)

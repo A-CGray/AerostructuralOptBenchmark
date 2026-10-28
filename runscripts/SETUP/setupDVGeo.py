@@ -405,7 +405,7 @@ def setupDVGeo(
             # to stop the optimiser thinning out the trailing edge of the wing too much, which is a common issue
             DVGeoComp.nom_addThicknessConstraints2D("TEThickness", TESparCoords, TECoords, nSpan=20, nChord=20)
             top.add_constraint(f"{geoCompName}.TEThickness", lower=0.5)
-        if args.addLandingGearCon:
+        if args.addPlanformCons:
             # Constraint that the rear spar of the centre wingbox cannot move any further backward than its original location
             centreBoxTECoords = wingGeometry["wingbox"]["TESparCoords"][:2]
             lowerBound = list(centreBoxTECoords.flatten())

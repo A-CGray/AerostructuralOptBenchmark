@@ -133,9 +133,7 @@ parser.add_argument(
     ],
     help="Task to run",
 )
-parser.add_argument(
-    "--flightPointSet", type=str, default="mnver_sealevel_va_pullup", choices=list(flightPointSets.keys())
-)
+parser.add_argument("--flightPointSet", type=str, default="cruise", choices=list(flightPointSets.keys()))
 parser.add_argument("--vlmFlightPoints", nargs="*", default=[], help="List of flight points to use VLM for")
 parser.add_argument(
     "--procs",
@@ -262,7 +260,7 @@ if args.task == "derivCheck":
 if args.task == "trim":
     args.addStructDVs = False
     args.addGeoDVs = False
-    args.addLandingGearCon = False
+    args.addPlanformCons = False
 
 # If we're running the setup check, enable everything
 if args.task == "check":
@@ -270,7 +268,7 @@ if args.task == "check":
     args.addStructDVs = True
     args.usePanelLengthDVs = True
     args.useFuelMassDVs = True
-    args.addLandingGearCon = True
+    args.addPlanformCons = True
     args.twist = True
     args.sweep = True
     args.shape = True
@@ -732,9 +730,9 @@ class AnalysisPoint(Multipoint):
             # ==============================================================================
             # WimpressCalc Setup
             # ==============================================================================
-            wimpressCalc, wimpressCalcComp, _ = setupWimpress(addLandingGearCon=args.addLandingGearCon)
+            wimpressCalc, wimpressCalcComp, _ = setupWimpress(addPlanformCons=args.addPlanformCons)
             if globalRank == 0:
-                wimpressCalc.writeTecplot(os.path.join(outputDir, "wimpressCalcInit.dat"))
+                wimpressCalc.writeTecplot(os.path.join(geoOutputDir, "wimpressCalcInit.dat"))
             # Because the WimpressCalc component isn't following the MPhys convention we can just add the wimpress
             # coordinates directly as a pointset. The geometry component will then output the deformed coordinates without
             # needing a corresponding input. Unfortunately we can't do this in setup because the DVGeo instances associated
@@ -742,7 +740,7 @@ class AnalysisPoint(Multipoint):
             # and connect things in configure instead.
             self.add_subsystem("PlanformValues", wimpressCalcComp)
 
-            if args.addLandingGearCon:
+            if args.addPlanformCons:
                 wimpressFuncs = {}
                 wimpressCalc.evalFunctions(wimpressFuncs)
                 self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
@@ -1037,9 +1035,9 @@ class AnalysisPoint(Multipoint):
 
         DVCon = self.geometry.nom_getDVCon()
         if globalRank == 0:
-            DVCon.writeTecplot(os.path.join(outputDir, "DVConstraints.dat"))
-            DVCon.writeSurfaceTecplot(os.path.join(outputDir, "DVConstraintsSurface.dat"))
-            DVCon.writeSurfaceSTL(os.path.join(outputDir, "DVConstraintsSurface.stl"))
+            DVCon.writeTecplot(os.path.join(geoOutputDir, "DVConstraints.dat"))
+            DVCon.writeSurfaceTecplot(os.path.join(geoOutputDir, "DVConstraintsSurface.dat"))
+            DVCon.writeSurfaceSTL(os.path.join(geoOutputDir, "DVConstraintsSurface.stl"))
 
         # Connect rib bay volumes to the fuel distribution group
         for ii in range(self.numRibBays):
@@ -1214,12 +1212,30 @@ if args.task != "trim":
                     cache_linear_solution=True,
                 )
 
-            if args.addLandingGearCon and (args.span or args.taper or args.sweep):
+            if args.addPlanformCons and (args.span or args.taper or args.sweep):
                 # This constraint should only be applied if the optimiser has control over the wing planform
                 # The centre wingbox TE spar location constraint is already handled by DVCon, here we just need to constrain that, at the landing gear spanwise coordinate:
                 # - TE chordwise coordinate must be at least it's initial value
                 # - TE Spar coordinate must be at least it's initial value
                 wimpressFuncs = None
+                flightPointProb.model.add_constraint(
+                    "PlanformCons.forwardCGX",
+                    upper=wingGeometry["wing"]["forwardCGX"],
+                )
+                flightPointProb.model.add_constraint(
+                    "PlanformCons.aftCGX",
+                    lower=wingGeometry["wing"]["aftCGX"],
+                )
+                flightPointProb.model.add_constraint(
+                    "PlanformCons.landingGearTEX",
+                    lower=wingGeometry["wing"]["landingGearTEX"],
+                )
+                landingGearChord = abs(wingGeometry["wing"]["landingGearLEX"] - wingGeometry["wing"]["landingGearTEX"])
+                flightPointProb.model.add_constraint(
+                    "PlanformCons.landingGearTESparX",
+                    upper=wingGeometry["wing"]["landingGearLEX"]
+                    + wingGeometry["wingbox"]["TESparFrac"] * landingGearChord,
+                )
 
     # --- Buffet constraints ---
     if "buffet" in localFlightPoint.name.lower():
