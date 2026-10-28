@@ -22,6 +22,12 @@ import numpy as np
 # ==============================================================================
 
 # ==============================================================================
+# Unit conversions
+# ==============================================================================
+in2m = 0.0254
+f2m = in2m * 12
+
+# ==============================================================================
 # Direction definition
 # ==============================================================================
 spanIndex = 1  # index of the spanwise direction (0=x, 1=y, 2=z)
@@ -85,7 +91,7 @@ sectionVerticalOffset = np.array([0.0, 0.0])  # Offset of each section in the ve
 sectionTwist = np.array([0.0, 0.0])  # Twist of each section (around the spanwise axis) in degrees
 sectionProfiles = ["rae2822.dat"] * 2  # Airfoil profile files for each section
 
-teHeight = 0.25 * 0.0254  # thickness of the trailing edge (1/4 inch) in metres
+teHeight = 0.25 * in2m  # thickness of the trailing edge (1/4 inch) in metres
 
 wingGeoData = {
     "semiSpan": semiSpan,
@@ -138,6 +144,16 @@ highLiftData = {
     "FlapAreaFrac": FLAP_AREA_FRAC,
 }
 wingGeoData.update(highLiftData)
+
+# --- Landing gear location ---
+wingGeoData["landingGearSpan"] = 8 * f2m
+
+# --- CG locations (expressed in % MAC) ---
+wingGeoData["forwardCGMAC"] = 0.12
+wingGeoData["forwardCGCoord"] = 3.50482
+wingGeoData["aftCGMAC"] = 0.25
+wingGeoData["aftCGCoord"] = 3.96814
+
 
 # ==============================================================================
 # Horizontal Tail Definition
