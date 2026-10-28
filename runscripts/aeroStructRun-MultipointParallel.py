@@ -61,7 +61,7 @@ import SETUP.setupTACS as setupTACS
 from SETUP.setupDVGeo import setupDVGeo
 from SETUP.setupADflow import getADflowOptions
 from SETUP.setupIDWarp import getIDWarpOptions
-from SETUP.setupWimpress import setupWimpress, PlanformConGroup
+from SETUP.setupWimpress import setupWimpress, PlanformConGroup, PLANFORM_CON_INPUT_NAMES
 from CommonArgs import parser
 from OptimiserOptions import getOptOptions
 from utils import (
@@ -120,7 +120,7 @@ isComplex = TACS.dtype == complex
 parser.add_argument(
     "--task",
     type=str,
-    default="analysis",
+    default="check",
     choices=[
         "writeJigShape",
         "check",
@@ -742,6 +742,8 @@ class AnalysisPoint(Multipoint):
                 wimpressFuncs = {}
                 wimpressCalc.evalFunctions(wimpressFuncs)
                 self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
+                for varName in PLANFORM_CON_INPUT_NAMES:
+                    self.connect(f"PlanformValues.{varName}", f"PlanformCons.{varName}")
 
         # ==============================================================================
         # Add TACS dvs

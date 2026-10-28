@@ -27,6 +27,9 @@ import openmdao.api as om
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
+LG_STATION_NAME = "LandingGear"
+PLANFORM_CON_INPUT_NAMES = ["MAC", "xLEMAC", f"xLE_{LG_STATION_NAME}", f"chord_{LG_STATION_NAME}"]
+
 
 def setupWimpress(addLandingGearCon=False):
     liftIndex = wingGeometry["verticalIndex"] + 1
