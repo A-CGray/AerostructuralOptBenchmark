@@ -445,6 +445,10 @@ if usingVLM:
 # ==============================================================================
 
 # Create output directories
+geoOutputDir = os.path.join(outputDir, "Geometry")
+if globalRank == 0:
+    os.makedirs(geoOutputDir, exist_ok=True)
+
 localOutputDir = os.path.join(outputDir, localFlightPoint.name)
 localAeroOutputDir = os.path.join(localOutputDir, "aero")
 localStructOutputDir = os.path.join(localOutputDir, "struct")
@@ -1464,13 +1468,20 @@ def writeAeroStructSolution():
     scenario = getattr(flightPointProb.model, localFlightPoint.name)
     scenario.struct_post.write_solution()
     if isAeroStruct:
+        iterNum = scenario.aero_post.solution_counter - 1
         if not usingVLM:
             scenario.aero_post.nom_write_solution()
             if ptID == 0:
                 dummyAeroSolver = flightPointProb.model.dummyAeroSolver
                 dummyAeroSolver.setAeroProblem(localFlightPoint)
                 dummyAeroSolver(localFlightPoint, writeSolution=False)
-                dummyAeroSolver.writeSolution(baseName="jigshape", number=(scenario.aero_post.solution_counter - 1))
+                dummyAeroSolver.writeSolution(baseName="jigshape", number=iterNum)
+        geometryComp = flightPointProb.model.geometry
+        DVCon = geometryComp.nom_getDVCon()
+        wimpressCalc = flightPointProb.model.PlanformValues.wimpressCalc
+        if globalRank == 0:
+            DVCon.writeTecplot(os.path.join(geoOutputDir, f"GeoConstraints_{iterNum:03d}.dat"))
+            wimpressCalc.writeTecplot(os.path.join(geoOutputDir, f"WimpressCalc_{iterNum:03d}.dat"))
 
 
 def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
