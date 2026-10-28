@@ -387,8 +387,8 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
     if con["equals"] is not None:
         lb = ub = con["equals"] / scale
     else:
-        lb = con["lower"] / scale
-        ub = con["upper"] / scale
+        lb = None if con["lower"] is None else con["lower"] / scale
+        ub = None if con["upper"] is None else con["upper"] / scale
 
     # get size
     size = con["global_size"] if con["distributed"] else con["size"]
