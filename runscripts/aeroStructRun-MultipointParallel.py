@@ -1483,8 +1483,9 @@ if ptRank == 0:
 def writeAeroStructSolution():
     scenario = getattr(flightPointProb.model, localFlightPoint.name)
     scenario.struct_post.write_solution()
+    # The TACS counter is only incremented by the write above, so it is in sync across all flight points
+    iterNum = scenario.struct_post.eval_funcs.solution_counter - 1
     if isAeroStruct:
-        iterNum = scenario.aero_post.solution_counter - 1
         if not usingVLM:
             scenario.aero_post.nom_write_solution()
             if ptID == 0:
