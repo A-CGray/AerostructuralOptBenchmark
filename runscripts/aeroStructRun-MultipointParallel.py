@@ -88,6 +88,7 @@ from utils import (
     gatherMergedDict,
     gatherUnion,
     setLocalVals,
+    printBanner,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -1403,11 +1404,7 @@ MP.addDVsAsFunctions(dvsForObjCon)
 gradFuncs = ptComm.bcast(gradFuncs, root=0)
 
 if ptRank == 0:
-    print("\n===============================================================================", flush=True)
-    print("Grad funcs:", flush=True)
-    for func in gradFuncs:
-        print(f"  - {func}", flush=True)
-    print("===============================================================================\n", flush=True)
+    printBanner({"Grad funcs": gradFuncs})
 
 # --- Disp funcs ---
 # First add all the grad funcs, and all the functions we need to pass to the performance model
@@ -1450,11 +1447,7 @@ dispFuncs = list(set(dispFuncs))
 dispFuncs = ptComm.bcast(dispFuncs, root=0)
 
 if ptRank == 0:
-    print("\n===============================================================================", flush=True)
-    print("Disp funcs:", flush=True)
-    for func in dispFuncs:
-        print(f"  - {func}", flush=True)
-    print("===============================================================================\n", flush=True)
+    printBanner({"Disp funcs": dispFuncs})
 
 
 # ==============================================================================
@@ -1814,19 +1807,9 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
 
     # Print out some useful info about the optimization problem
     if ptRank == 0:
-        print("\n===============================================================================", flush=True)
-        print("Design variables:", flush=True)
-        for dv in optProb.variables:
-            print(f"  - {dv}", flush=True)
-
-        print("\nConstraints:", flush=True)
-        for con in optProb.constraints:
-            print(f"  - {con}", flush=True)
-
-        print("\nObjectives:", flush=True)
-        for obj in objectives:
-            print(f"  - {obj}", flush=True)
-        print("===============================================================================\n", flush=True)
+        printBanner(
+            {"Design variables": optProb.variables, "Constraints": optProb.constraints, "Objectives": objectives}
+        )
 
     optProb.printSparsity(verticalPrint=True)
 

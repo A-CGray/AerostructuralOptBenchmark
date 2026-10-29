@@ -29,6 +29,10 @@ from geometry.wingGeometry import wingGeometry  # noqa: E402
 from performanceCalc import FuelDistributionGroup  # noqa: E402
 
 
+# Line printed above and below the banners made by printBanner
+BANNER_LINE = "=" * 79
+
+
 def getGeometryData():
     return wingGeometry
 
@@ -333,6 +337,27 @@ def gatherUnion(comm, localItems: Iterable) -> list:
     for rankItems in comm.allgather(list(localItems)):
         allItems.update(rankItems)
     return sorted(allItems)
+
+
+# ==============================================================================
+# Functions for printing
+# ==============================================================================
+def printBanner(sections: dict[str, Iterable[str]]) -> None:
+    """Print titled lists of items between two lines of "=", with an empty line between sections
+
+    Parameters
+    ----------
+    sections : dict[str, Iterable[str]]
+        Items to print, keyed by section title
+    """
+    print("\n" + BANNER_LINE, flush=True)
+    for sectionNum, (title, items) in enumerate(sections.items()):
+        if sectionNum > 0:
+            print(flush=True)
+        print(f"{title}:", flush=True)
+        for item in items:
+            print(f"  - {item}", flush=True)
+    print(BANNER_LINE + "\n", flush=True)
 
 
 # ==============================================================================

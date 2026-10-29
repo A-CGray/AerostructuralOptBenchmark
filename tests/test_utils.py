@@ -1,6 +1,8 @@
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
+import contextlib
+import io
 import unittest
 
 # ==============================================================================
@@ -14,7 +16,7 @@ from hypothesis.strategies import integers, lists, text
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from utils import computeProcsPerMember, gatherMergedDict, gatherUnion, setLocalVals
+from utils import BANNER_LINE, computeProcsPerMember, gatherMergedDict, gatherUnion, printBanner, setLocalVals
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
@@ -129,6 +131,47 @@ class TestSetLocalVals(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             setLocalVals(self.prob, {"x": np.ones(3)})
         self.assertNotIsInstance(context.exception, KeyError)
+
+
+def capturePrintedBanner(sections: dict) -> str:
+    """Return everything printBanner prints for the given sections."""
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        printBanner(sections)
+    return printed.getvalue()
+
+
+class TestPrintBanner(unittest.TestCase):
+    def test_single_section_matches_existing_format(self):
+        """
+        Given one section with two items,
+        when the banner is printed,
+        then the output matches the runscript's original banner: an empty line, a line of "=", the title, one
+        indented "- " line per item, a line of "=", and an empty line.
+        """
+        expected = "\n" + BANNER_LINE + "\nGrad funcs:\n  - a\n  - b\n" + BANNER_LINE + "\n\n"
+        self.assertEqual(capturePrintedBanner({"Grad funcs": ["a", "b"]}), expected)
+
+    def test_sections_separated_by_one_empty_line(self):
+        """Assert that several sections are printed in order inside one banner, with one empty line between them."""
+        expected = (
+            "\n"
+            + BANNER_LINE
+            + "\nDesign variables:\n  - a\n\nConstraints:\n  - b\n\nObjectives:\n  - c\n"
+            + BANNER_LINE
+            + "\n\n"
+        )
+        sections = {"Design variables": ["a"], "Constraints": ["b"], "Objectives": ["c"]}
+        self.assertEqual(capturePrintedBanner(sections), expected)
+
+    def test_section_without_items_prints_only_title(self):
+        """Assert that a section with no items prints its title and no item lines."""
+        expected = "\n" + BANNER_LINE + "\nDisp funcs:\n" + BANNER_LINE + "\n\n"
+        self.assertEqual(capturePrintedBanner({"Disp funcs": []}), expected)
+
+    def test_banner_line_matches_existing_banners(self):
+        """Assert that the banner line is the 79-character line of "=" the runscript printed before."""
+        self.assertEqual(BANNER_LINE, "===============================================================================")
 
 
 if __name__ == "__main__":
