@@ -691,6 +691,13 @@ class FuelConsistencyGroup(om.Group):
             else:
                 execComp = om.ExecComp(
                     f"fuelMassDiff = fuelMass - ({fp.fuelFraction} * fuelBurn + {specs['reserveFuelMass']})",
+                    fuelMass={"units": "kg"},
+                    fuelBurn={"units": "kg"},
+                    fuelMassDiff={"units": "kg"},
+                )
+                self.add_subsystem(
+                    f"{fp.name}FuelConsistency",
+                    execComp,
                     promotes_inputs=[("fuelMass", f"{fp.name}-fuelMass"), "fuelBurn"],
                     promotes_outputs=[("fuelMassDiff", f"{fp.name}FuelMassDiff")],
                 )
