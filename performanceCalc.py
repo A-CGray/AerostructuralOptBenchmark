@@ -644,7 +644,12 @@ class LiftConstraintGroup(om.Group):
                     inputMassVar = f"{fp.name}_mass"
                     self.add_subsystem(
                         f"{fp.name}_mass",
-                        om.ExecComp(f"{inputMassVar} = landingGrossMass - fuelBurn * {fuelFraction}"),
+                        om.ExecComp(
+                            f"{inputMassVar} = landingGrossMass - fuelBurn * {fuelFraction}",
+                            landingGrossMass={"units": "kg"},
+                            fuelBurn={"units": "kg"},
+                            **{inputMassVar: {"units": "kg"}},
+                        ),
                         promotes=["*"],
                     )
 
