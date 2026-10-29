@@ -103,6 +103,7 @@ np.set_printoptions(precision=16, linewidth=200)
 # --- Get some info on the wing geometry ---
 SPAN_INDEX = wingGeometry["spanIndex"]
 INDEX_STRINGS = ["x", "y", "z"]
+WING_SEMISPAN = wingGeometry["wing"]["semiSpan"]
 
 # Flow conditions that OpenAeroStruct reads from inputs instead of the AeroProblem:
 # (input name suffix, FlightPoint attribute, units)
@@ -112,7 +113,6 @@ VLM_FLOW_CONDITIONS = [
     ("v", "V", "m/s"),
     (MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER, "re", "1/m"),
 ]
-WING_SEMISPAN = wingGeometry["wing"]["semiSpan"]
 
 # --- Figure out where to put the results ---
 OUTPUT_PARENT_DIR = getOutputDir()
