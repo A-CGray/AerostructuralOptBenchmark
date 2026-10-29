@@ -1920,12 +1920,26 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         args.optimality,
     )
 
+    # SNOPT settings for the trim task
+    TRIM_STEP_LIMIT = 1e30
+    TRIM_FEASIBILITY_TOL = 1e-4
+    TRIM_LINESEARCH_TOL = 1.0
+    TRIM_PENALTY_PARAMETER = 1e3
+
     restartDict = None
     if args.optimiser == "snopt":
         optimiserOptions["Return work arrays"] = True
         if args.task == "trim":
+            # Ignore the objective, only satisfy the trim constraints
             optimiserOptions["Problem Type"] = "Feasible point"
-            optimiserOptions["Major step limit"] = 1e30
+            # Avoid the step limit
+            optimiserOptions["Major step limit"] = TRIM_STEP_LIMIT
+            optimiserOptions["Major feasibility tolerance"] = TRIM_FEASIBILITY_TOL
+            # Avoid the line search as much as possible
+            optimiserOptions["Linesearch tolerance"] = TRIM_LINESEARCH_TOL
+            # Only care about satisfying the constraints, not the DV change norm objective SNOPT uses in feasible point
+            # mode
+            optimiserOptions["Penalty parameter"] = TRIM_PENALTY_PARAMETER
         if args.timeLimit is not None:
             # Correct the time limit for the time that has elapsed already
             args.timeLimit = globalComm.bcast(args.timeLimit - (time.time() - startTime), root=0)
@@ -1941,16 +1955,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # Run the optimisation
     # ==============================================================================
     if args.task == "trim":
-        if args.optimizer == "SNOPT":
-            optimiser.setOption("Major feasibility tolerance", 1e-4)
-            optimiser.setOption("Major Step Limit", 1e30)  # Try to avoid major step limit as much as possible
-            optimiser.setOption("Linesearch tolerance", 1.0)  # Try to avoid linesearch as much as possible
-            optimiser.setOption(
-                "Penalty parameter", 1e3
-            )  # Jack up the penalty parameter so that SNOPT only cares about satisfying constraints, not the DV change norm objective that SNOPT uses in "Feasible point" mode
-            optimiser.setOption(
-                "Feasible point", None
-            )  # Run in feasible point mode to tell SNOPT to ignore the objective
         sol = optimiser(
             optProb,
             MP.sens,
