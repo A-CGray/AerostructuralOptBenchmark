@@ -84,6 +84,7 @@ from utils import (
     AverageComp,
     getRelevantInputs,
     getAeroForceName,
+    computeProcsPerMember,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -337,10 +338,7 @@ MP = multiPointSparse(globalComm)
 nMembers = len(flightPoints)
 if len(args.procs) == 0:
     # If no processors are specified, split them evenly between the members
-    procsPerMember = [globalComm.size // nMembers] * nMembers
-    extraProcs = globalComm.size - sum(procsPerMember)
-    for ii in range(1, extraProcs + 1):
-        procsPerMember[-ii] += 1
+    procsPerMember = computeProcsPerMember(globalComm.size, nMembers)
 else:
     if len(args.procs) != nMembers:
         raise ValueError(f"You specified {nMembers} flight points but only {len(args.procs)} processor counts")

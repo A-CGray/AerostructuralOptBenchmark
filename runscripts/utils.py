@@ -232,6 +232,40 @@ def getOutputDir():
 
 
 # ==============================================================================
+# Functions for running in parallel
+# ==============================================================================
+def computeProcsPerMember(numProcs: int, numMembers: int) -> list[int]:
+    """Split processors as evenly as possible between the members of a processor set
+
+    Parameters
+    ----------
+    numProcs : int
+        Total number of processors to split
+    numMembers : int
+        Number of members to split them between
+
+    Returns
+    -------
+    list[int]
+        Number of processors for each member, any processors left over from an even split go to the last members
+
+    Raises
+    ------
+    ValueError
+        If there are no members, or fewer processors than members
+    """
+    if numMembers < 1:
+        raise ValueError(f"Cannot split processors between {numMembers} members")
+    if numProcs < numMembers:
+        raise ValueError(f"Cannot split {numProcs} processors between {numMembers} members, need at least one each")
+    procsPerMember = [numProcs // numMembers] * numMembers
+    extraProcs = numProcs - sum(procsPerMember)
+    for ii in range(1, extraProcs + 1):
+        procsPerMember[-ii] += 1
+    return procsPerMember
+
+
+# ==============================================================================
 # Functions for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
 def getPromName(system, abs_name):
