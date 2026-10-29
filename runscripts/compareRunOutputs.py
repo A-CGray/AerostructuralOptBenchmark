@@ -296,6 +296,12 @@ def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompare
     refDir = os.path.abspath(refDir)
     newDir = os.path.abspath(newDir)
     messages = []
+    for runDir in [refDir, newDir]:
+        if not os.path.isdir(runDir):
+            messages.append(f"{runDir}: directory does not exist")
+    if len(messages) > 0:
+        return messages
+
     for dirPath, _, fileNames in sorted(os.walk(refDir)):
         for fileName in sorted(fileNames):
             isStdout = fileName == STDOUT_FILE_NAME

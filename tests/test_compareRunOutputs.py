@@ -1,6 +1,8 @@
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
+import os
+import tempfile
 import unittest
 
 # ==============================================================================
@@ -17,6 +19,7 @@ from hypothesis.strategies import floats
 from compareRunOutputs import (
     DEFAULT_ATOL,
     DEFAULT_RTOL,
+    compareRunDirs,
     compareValues,
     normaliseStdoutLines,
     parseListBlocks,
@@ -161,6 +164,19 @@ class TestCompareValues(unittest.TestCase):
         messages = compareValues({"u": "m"}, {"u": "ft"}, DEFAULT_RTOL, DEFAULT_ATOL)
         self.assertEqual(len(messages), 1)
         self.assertIn("u", messages[0])
+
+
+class TestCompareRunDirs(unittest.TestCase):
+    def test_missing_directory_reported(self):
+        """
+        Given a reference or new run directory that does not exist,
+        when the two directories are compared,
+        then a difference is reported instead of the comparison passing with nothing to compare.
+        """
+        with tempfile.TemporaryDirectory() as existingDir:
+            missingDir = os.path.join(existingDir, "missing")
+            self.assertEqual(len(compareRunDirs(missingDir, existingDir, DEFAULT_RTOL, DEFAULT_ATOL, True)), 1)
+            self.assertEqual(len(compareRunDirs(existingDir, missingDir, DEFAULT_RTOL, DEFAULT_ATOL, True)), 1)
 
 
 if __name__ == "__main__":
