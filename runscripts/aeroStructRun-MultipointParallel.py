@@ -105,6 +105,15 @@ SPAN_INDEX = wingGeometry["spanIndex"]
 CHOARD_INDEX = wingGeometry["chordIndex"]
 VERTICAL_INDEX = wingGeometry["verticalIndex"]
 INDEX_STRINGS = ["x", "y", "z"]
+
+# Flow conditions that OpenAeroStruct reads from inputs instead of the AeroProblem:
+# (input name suffix, FlightPoint attribute, units)
+VLM_FLOW_CONDITIONS = [
+    ("rho", "rho", "kg/m**3"),
+    (MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER, "mach", None),
+    ("v", "V", "m/s"),
+    (MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER, "re", "1/m"),
+]
 WING_SEMISPAN = wingGeometry["wing"]["semiSpan"]
 
 # --- Figure out where to put the results ---
@@ -983,29 +992,10 @@ class AnalysisPoint(Multipoint):
             self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
             if usingVLM:
                 # OpenAerostruct gets flight conditions from inputs instead of the aero problem
-                dvComp.add_output(f"{fp.name}-rho", val=fp.rho, units="kg/m**3")
-                dvComp.add_output(f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}", fp.mach)
-                dvComp.add_output(f"{fp.name}-v", fp.V, units="m/s")
-                dvComp.add_output(
-                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}", fp.re, units="1/m"
-                )
-
-                dvNames = [
-                    alphaDVName,
-                    f"{fp.name}-rho",
-                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}",
-                    f"{fp.name}-v",
-                    f"{fp.name}-{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}",
-                ]
-                inputNames = [
-                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}",
-                    f"{fp.name}.rho",
-                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.MACH_NUMBER}",
-                    f"{fp.name}.v",
-                    f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER}",
-                ]
-                for dvName, inputName in zip(dvNames, inputNames, strict=True):
-                    self.connect(dvName, inputName)
+                self.connect(alphaDVName, f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}")
+                for suffix, fpAttr, units in VLM_FLOW_CONDITIONS:
+                    dvComp.add_output(f"{fp.name}-{suffix}", val=getattr(fp, fpAttr), units=units)
+                    self.connect(f"{fp.name}-{suffix}", f"{fp.name}.{suffix}")
             else:
                 # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
                 fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
@@ -1765,6 +1755,10 @@ if args.task == "polar":
             localFlightPoint.mach = mach
             # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
             x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
+            if usingVLM:
+                # Setting the Mach number updates the AeroProblem's other flow conditions, but VLM reads them from inputs
+                for suffix, fpAttr, _ in VLM_FLOW_CONDITIONS:
+                    x[f"dvs.{localFlightPoint.name}-{suffix}"] = getattr(localFlightPoint, fpAttr)
             funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
             writeOutputs(
                 flightPointProb,
