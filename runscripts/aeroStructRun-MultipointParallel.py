@@ -129,7 +129,6 @@ parser.add_argument(
     type=str,
     default="check",
     choices=[
-        "writeJigShape",
         "check",
         "analysis",
         "derivCheck",
@@ -1688,21 +1687,6 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
             funcs = runAeroStructAnalyses(evalFuncs=evalFuncs, writeSolution=writeSolution)
     return funcs
 
-
-if args.task == "writeJigShape":
-    x = {}
-    for dvName in designVariables:
-        try:
-            value = flightPointProb.get_val(dvName)
-        except KeyError:
-            value = performanceProb.get_val(dvName)
-        x[dvName] = value
-    scenario = getattr(flightPointProb.model, localFlightPoint.name)
-    if ptID == 0:
-        dummyAeroSolver = flightPointProb.model.dummyAeroSolver
-        dummyAeroSolver.DVGeo.setDesignVars(x)
-    writeAeroStructSolution()
-    exit(0)
 
 if args.task != "check":
     # ==============================================================================
