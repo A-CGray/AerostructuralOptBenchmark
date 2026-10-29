@@ -1772,9 +1772,10 @@ if args.task == "polar":
                 fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs",
             )
 if args.task == "rawPolar":
-    alphaMin = localFlightPoint.alpha - 1 if args.alphaMin is None else args.alphaMin
-    alphaMax = localFlightPoint.alpha + 1 if args.alphaMax is None else args.alphaMax
-    alphas = np.linspace(args.alphaMin, args.alphaMax, args.numAlpha)
+    RAW_POLAR_DEFAULT_ALPHA_RANGE = 1.0  # degrees either side of the flight point's alpha
+    alphaMin = localFlightPoint.alpha - RAW_POLAR_DEFAULT_ALPHA_RANGE if args.alphaMin is None else args.alphaMin
+    alphaMax = localFlightPoint.alpha + RAW_POLAR_DEFAULT_ALPHA_RANGE if args.alphaMax is None else args.alphaMax
+    alphas = np.linspace(alphaMin, alphaMax, args.numAlpha)
     for alphaIndex, alpha in enumerate(alphas):
         # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
         x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
