@@ -6,13 +6,15 @@ import unittest
 # ==============================================================================
 # External Python modules
 # ==============================================================================
+import numpy as np
+import openmdao.api as om
 from hypothesis import given
 from hypothesis.strategies import integers, lists, text
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from utils import computeProcsPerMember, gatherMergedDict, gatherUnion
+from utils import computeProcsPerMember, gatherMergedDict, gatherUnion, setLocalVals
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
@@ -104,6 +106,29 @@ class TestGatherUnion(unittest.TestCase):
         expected = sorted({item for items in allRankItems for item in items})
         comm = FakeComm(0, allRankItems)
         self.assertEqual(gatherUnion(comm, allRankItems[0]), expected)
+
+
+class TestSetLocalVals(unittest.TestCase):
+    def setUp(self):
+        self.prob = om.Problem()
+        ivc = self.prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", np.zeros(2))
+        self.prob.setup()
+
+    def test_existing_values_set_and_missing_names_skipped(self):
+        """
+        Given a problem with a variable "x" but no variable "notInModel",
+        when values for both are set,
+        then "x" takes its new value and "notInModel" is skipped without an error.
+        """
+        setLocalVals(self.prob, {"x": np.array([1.0, 2.0]), "notInModel": 3.0})
+        np.testing.assert_array_equal(self.prob.get_val("x"), [1.0, 2.0])
+
+    def test_other_errors_still_raised(self):
+        """Assert that an error other than a missing name, such as a value of the wrong shape, is still raised."""
+        with self.assertRaises(Exception) as context:
+            setLocalVals(self.prob, {"x": np.ones(3)})
+        self.assertNotIsInstance(context.exception, KeyError)
 
 
 if __name__ == "__main__":

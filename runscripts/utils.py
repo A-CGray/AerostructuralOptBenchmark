@@ -160,6 +160,26 @@ def setValsFromFiles(files: Union[list[str], str], prob: om.Problem) -> None:
         print("===============================================================================\n")
 
 
+def setLocalVals(prob: om.Problem, vals: dict) -> None:
+    """Set the values that exist in an OpenMDAO problem, skipping any names the problem doesn't have
+
+    In the multipoint script, the design variable dict holds the design variables of every flight point, but each
+    processor's model only has the ones for its own flight point.
+
+    Parameters
+    ----------
+    prob : om.Problem
+        The OpenMDAO problem to set values in
+    vals : dict
+        Values to set, keyed by variable name
+    """
+    for name, val in vals.items():
+        try:
+            prob.set_val(name, val)
+        except KeyError:
+            pass
+
+
 def writeOutputs(prob: om.Problem, outputDir: str, fileName: Optional[str] = None) -> None:
     """Write the outputs of an OpenMDAO model to a pickle
 

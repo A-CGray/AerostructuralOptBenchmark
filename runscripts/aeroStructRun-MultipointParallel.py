@@ -87,6 +87,7 @@ from utils import (
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
+    setLocalVals,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -1494,11 +1495,7 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     """
     funcStartTime = time.time()
     if x is not None:
-        for key, val in x.items():
-            try:
-                flightPointProb.set_val(key, val)
-            except KeyError:
-                pass
+        setLocalVals(flightPointProb, x)
     fail = False
     try:
         flightPointProb.run_model()
@@ -1547,11 +1544,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
     """
     funcStartTime = time.time()
     if x is not None:
-        for key, val in x.items():
-            try:
-                flightPointProb.set_val(key, val)
-            except KeyError:
-                pass
+        setLocalVals(flightPointProb, x)
     if gradFuncs is None:
         gradFuncs = []
 
