@@ -136,7 +136,7 @@ class TestCompareValues(unittest.TestCase):
         """
         Given a reference dict with a key the new dict lacks, and a new dict with a key the reference lacks,
         when they are compared,
-        then each of the two keys is named in its own message.
+        then two messages are produced and each of the two keys is named in one of them.
         """
         messages = compareValues(
             {"common": 1.0, "onlyRef": 1.0}, {"common": 1.0, "onlyNew": 1.0}, DEFAULT_RTOL, DEFAULT_ATOL
@@ -163,6 +163,40 @@ class TestCompareValues(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertIn("x", messages[0])
 
+    def test_bool_difference_reported_not_raised(self):
+        """Assert that differing boolean values, scalar or array, give a message rather than raising an exception."""
+        self.assertEqual(len(compareValues({"b": True}, {"b": False}, DEFAULT_RTOL, DEFAULT_ATOL)), 1)
+        messages = compareValues(
+            {"b": np.array([True, False])}, {"b": np.array([True, True])}, DEFAULT_RTOL, DEFAULT_ATOL
+        )
+        self.assertEqual(len(messages), 1)
+
+    def test_identical_lists_of_arrays_equal(self):
+        """
+        Given lists and tuples holding arrays of different lengths, as pyOptSparse stores sparse sensitivities,
+        when each is compared with an identical copy,
+        then no messages are produced.
+        """
+        values = {
+            "csr": [np.array([0, 1, 3]), np.array([0, 1, 2]), np.array([1.0, 2.0, 3.0, np.nan])],
+            "pair": (np.zeros(2), "a"),
+            "nested": [{"a": np.zeros(3)}],
+        }
+        copiedValues = {
+            "csr": [array.copy() for array in values["csr"]],
+            "pair": (np.zeros(2), "a"),
+            "nested": [{"a": np.zeros(3)}],
+        }
+        self.assertEqual(compareValues(values, copiedValues, DEFAULT_RTOL, DEFAULT_ATOL), [])
+
+    def test_lists_of_arrays_differences_reported_with_index(self):
+        """Assert that a difference inside a list of arrays gives one message naming the list's key and the index."""
+        ref = {"csr": [np.array([0, 1]), np.array([1.0, 2.0, 3.0])]}
+        new = {"csr": [np.array([0, 1]), np.array([1.0, 2.0, 4.0])]}
+        messages = compareValues(ref, new, DEFAULT_RTOL, DEFAULT_ATOL)
+        self.assertEqual(len(messages), 1)
+        self.assertIn("csr.1", messages[0])
+
     def test_non_numeric_values_compared_with_equality(self):
         """Assert that non-numeric values such as strings give a message only when they are unequal."""
         self.assertEqual(compareValues({"u": "m"}, {"u": "m"}, DEFAULT_RTOL, DEFAULT_ATOL), [])
@@ -182,6 +216,33 @@ class TestCompareRunDirs(unittest.TestCase):
             missingDir = os.path.join(existingDir, "missing")
             self.assertEqual(len(compareRunDirs(missingDir, existingDir, DEFAULT_RTOL, DEFAULT_ATOL, True)), 1)
             self.assertEqual(len(compareRunDirs(existingDir, missingDir, DEFAULT_RTOL, DEFAULT_ATOL, True)), 1)
+
+    def test_reference_with_nothing_to_compare_reported(self):
+        """
+        Given a reference run directory containing no stdout, Outputs.pkl or history files,
+        when it is compared with another such directory,
+        then a difference is reported instead of the comparison passing with nothing compared.
+        """
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            self.assertEqual(len(compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, True)), 1)
+
+    def test_file_only_in_new_reported(self):
+        """
+        Given a new run directory with a stdout file that the reference run directory lacks,
+        when the two directories are compared,
+        then the extra file is reported by its relative path.
+        """
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            for runDir in [refDir, newDir]:
+                os.makedirs(os.path.join(runDir, "fp1"))
+                with open(os.path.join(runDir, "fp1", "stdout.out"), "w") as file:
+                    file.write("Grad funcs:\n  - a\n")
+            os.makedirs(os.path.join(newDir, "fp2"))
+            with open(os.path.join(newDir, "fp2", "stdout.out"), "w") as file:
+                file.write("Grad funcs:\n  - a\n")
+            messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, True)
+            self.assertEqual(len(messages), 1)
+            self.assertIn(os.path.join("fp2", "stdout.out"), messages[0])
 
 
 if __name__ == "__main__":

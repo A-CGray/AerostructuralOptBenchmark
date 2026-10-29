@@ -58,6 +58,8 @@ RUN_DIR_PLACEHOLDER = "<RUN_DIR>"
 STDOUT_FILE_NAME = "stdout.out"
 OUTPUTS_FILE_NAME = "Outputs.pkl"
 HISTORY_FILE_EXTENSION = ".hst"
+# History file entries that define the optimisation problem: DV and constraint bounds and scales, objective scales
+HISTORY_PROBLEM_DEFINITION_KEYS = ["varInfo", "conInfo", "objInfo"]
 
 
 def parseListBlocks(text: str) -> dict[str, set[str]]:
@@ -137,7 +139,10 @@ def _getNumericArray(value):
         array = np.asarray(value)
     except (ValueError, TypeError):
         return None
-    if np.issubdtype(array.dtype, np.number) or np.issubdtype(array.dtype, np.bool_):
+    if np.issubdtype(array.dtype, np.bool_):
+        # numpy can't subtract bools, which computing the size of a difference needs
+        return array.astype(int)
+    if np.issubdtype(array.dtype, np.number):
         return array
     return None
 
@@ -153,8 +158,8 @@ def _areEqual(ref, new) -> bool:
 def compareValues(ref, new, rtol: float, atol: float, path: str = "") -> list[str]:
     """Compare two (possibly nested) values and describe every difference
 
-    Dicts are compared key by key, numeric values to the given tolerance (with NaN equal to NaN) and anything else
-    with ==.
+    Dicts are compared key by key, numeric values to the given tolerance (with NaN equal to NaN), other lists and
+    tuples item by item, and anything else with ==.
 
     Parameters
     ----------
@@ -203,6 +208,15 @@ def compareValues(ref, new, rtol: float, atol: float, path: str = "") -> list[st
             return [f"{pathName}: values differ, max abs difference {maxAbsDiff:.3e}"]
         return []
 
+    if isinstance(ref, (list, tuple)) and isinstance(new, (list, tuple)):
+        if len(ref) != len(new):
+            return [f"{pathName}: length differs, ref {len(ref)}, new {len(new)}"]
+        messages = []
+        for ii, (refItem, newItem) in enumerate(zip(ref, new, strict=True)):
+            childPath = f"{path}.{ii}" if len(path) > 0 else str(ii)
+            messages += compareValues(refItem, newItem, rtol, atol, childPath)
+        return messages
+
     if not _areEqual(ref, new):
         return [f"{pathName}: ref {ref!r} != new {new!r}"]
     return []
@@ -237,6 +251,41 @@ def readFirstHistoryEntries(historyFile: str) -> tuple[dict, dict]:
             break
     hist.close()
     return (firstFuncs if firstFuncs is not None else {}, firstFuncsSens if firstFuncsSens is not None else {})
+
+
+def readHistoryProblemDefinition(historyFile: str) -> dict:
+    """Read the entries of a pyOptSparse history file that define the optimisation problem
+
+    Parameters
+    ----------
+    historyFile : str
+        Path to the history file
+
+    Returns
+    -------
+    dict
+        The ``varInfo``, ``conInfo`` and ``objInfo`` entries, keyed by those names, each an empty dict if missing
+    """
+    hist = History(historyFile, flag="r")
+    problemDefinition = {}
+    for key in HISTORY_PROBLEM_DEFINITION_KEYS:
+        entry = hist.read(key)
+        problemDefinition[key] = entry if entry is not None else {}
+    hist.close()
+    return problemDefinition
+
+
+def _findComparableFiles(runDir: str) -> set[str]:
+    """Find the stdout, Outputs.pkl and history files in a run directory, as paths relative to it"""
+    relPaths = set()
+    for dirPath, _, fileNames in os.walk(runDir):
+        for fileName in fileNames:
+            isStdout = fileName == STDOUT_FILE_NAME
+            isOutputs = fileName == OUTPUTS_FILE_NAME
+            isHistory = fileName.endswith(HISTORY_FILE_EXTENSION)
+            if isStdout or isOutputs or isHistory:
+                relPaths.add(os.path.relpath(os.path.join(dirPath, fileName), runDir))
+    return relPaths
 
 
 def _compareStdoutFiles(
@@ -277,6 +326,8 @@ def _compareStdoutFiles(
 def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompareStdoutLines: bool) -> list[str]:
     """Compare every stdout, Outputs.pkl and history file in a reference run directory with the same file in a new one
 
+    Files found in only one of the directories are reported, as is a reference directory with no files to compare.
+
     Parameters
     ----------
     refDir : str
@@ -304,34 +355,37 @@ def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompare
     if len(messages) > 0:
         return messages
 
-    for dirPath, _, fileNames in sorted(os.walk(refDir)):
-        for fileName in sorted(fileNames):
-            isStdout = fileName == STDOUT_FILE_NAME
-            isOutputs = fileName == OUTPUTS_FILE_NAME
-            isHistory = fileName.endswith(HISTORY_FILE_EXTENSION)
-            if not (isStdout or isOutputs or isHistory):
-                continue
+    refFiles = _findComparableFiles(refDir)
+    newFiles = _findComparableFiles(newDir)
+    if len(refFiles) == 0:
+        messages.append(
+            f"{refDir}: no {STDOUT_FILE_NAME}, {OUTPUTS_FILE_NAME} or *{HISTORY_FILE_EXTENSION} files to compare"
+        )
+    for relPath in sorted(refFiles - newFiles):
+        messages.append(f"{relPath}: missing from new")
+    for relPath in sorted(newFiles - refFiles):
+        messages.append(f"{relPath}: only in new")
 
-            refFile = os.path.join(dirPath, fileName)
-            relPath = os.path.relpath(refFile, refDir)
-            newFile = os.path.join(newDir, relPath)
-            if not os.path.isfile(newFile):
-                messages.append(f"{relPath}: missing from new")
-                continue
-
-            if isStdout:
-                messages += _compareStdoutFiles(refFile, newFile, refDir, newDir, relPath, doCompareStdoutLines)
-            elif isOutputs:
-                with open(refFile, "rb") as file:
-                    refOutputs = dill.load(file)
-                with open(newFile, "rb") as file:
-                    newOutputs = dill.load(file)
-                messages += compareValues(refOutputs, newOutputs, rtol, atol, relPath)
-            else:
-                refFuncs, refFuncsSens = readFirstHistoryEntries(refFile)
-                newFuncs, newFuncsSens = readFirstHistoryEntries(newFile)
-                messages += compareValues(refFuncs, newFuncs, rtol, atol, f"{relPath}.funcs")
-                messages += compareValues(refFuncsSens, newFuncsSens, rtol, atol, f"{relPath}.funcsSens")
+    for relPath in sorted(refFiles & newFiles):
+        refFile = os.path.join(refDir, relPath)
+        newFile = os.path.join(newDir, relPath)
+        fileName = os.path.basename(relPath)
+        if fileName == STDOUT_FILE_NAME:
+            messages += _compareStdoutFiles(refFile, newFile, refDir, newDir, relPath, doCompareStdoutLines)
+        elif fileName == OUTPUTS_FILE_NAME:
+            with open(refFile, "rb") as file:
+                refOutputs = dill.load(file)
+            with open(newFile, "rb") as file:
+                newOutputs = dill.load(file)
+            messages += compareValues(refOutputs, newOutputs, rtol, atol, relPath)
+        else:
+            refFuncs, refFuncsSens = readFirstHistoryEntries(refFile)
+            newFuncs, newFuncsSens = readFirstHistoryEntries(newFile)
+            messages += compareValues(refFuncs, newFuncs, rtol, atol, f"{relPath}.funcs")
+            messages += compareValues(refFuncsSens, newFuncsSens, rtol, atol, f"{relPath}.funcsSens")
+            refProblem = readHistoryProblemDefinition(refFile)
+            newProblem = readHistoryProblemDefinition(newFile)
+            messages += compareValues(refProblem, newProblem, rtol, atol, relPath)
     return messages
 
 
