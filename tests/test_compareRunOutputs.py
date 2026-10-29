@@ -104,6 +104,11 @@ class TestNormaliseStdoutLines(unittest.TestCase):
         text = "Time to solve: 1.2 s\nelapsed 3.4\n<object at 0x7f3a2b1c9d00>\nstable line\n"
         self.assertEqual(normaliseStdoutLines(text, RUN_DIR), normaliseStdoutLines("stable line\n", RUN_DIR))
 
+    def test_echoed_output_argument_dropped(self):
+        """Assert that the echoed `--output` argument line of a run command, which names the run's label, is dropped."""
+        text = "    --output refactor/baseline/structCheck \\\nstable line\n"
+        self.assertEqual(normaliseStdoutLines(text, RUN_DIR), normaliseStdoutLines("stable line\n", RUN_DIR))
+
     def test_line_order_ignored(self):
         """Assert that two texts containing the same lines in a different order normalise to equal results."""
         self.assertEqual(normaliseStdoutLines("a\nb", RUN_DIR), normaliseStdoutLines("b\na", RUN_DIR))

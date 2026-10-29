@@ -49,6 +49,8 @@ VOLATILE_LINE_PATTERNS = [
     re.compile(r"(?i)^time"),
     re.compile(r"(?i)^elapsed"),
     re.compile(r"0x[0-9a-fA-F]{6,}"),
+    # The echoed run command's --output argument names the run's label
+    re.compile(r"^\s*--output\s"),
 ]
 
 RUN_DIR_PLACEHOLDER = "<RUN_DIR>"
