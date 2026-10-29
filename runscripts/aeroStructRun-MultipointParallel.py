@@ -1734,7 +1734,7 @@ if args.task == "polar":
             # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
             x = {f"dvs.{localFlightPoint.name}_AOA": alpha}
             if usingVLM:
-                # Setting the Mach number updates the AeroProblem's other flow conditions, but VLM reads them from inputs
+                # Setting the Mach number updates the AeroProblem's other flow conditions, VLM reads them from inputs
                 for suffix, fpAttr, _ in VLM_FLOW_CONDITIONS:
                     x[f"dvs.{localFlightPoint.name}-{suffix}"] = getattr(localFlightPoint, fpAttr)
             funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
@@ -1933,6 +1933,9 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
             MP.sens,
             storeHistory=optHistFilename,
         )
+        if args.optimiser == "snopt":
+            # SNOPT also returns its working arrays, which trim doesn't need
+            sol = sol[0]
 
     elif args.task == "opt":
         if restartDict is not None:
