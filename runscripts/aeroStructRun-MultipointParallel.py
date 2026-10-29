@@ -102,8 +102,6 @@ np.set_printoptions(precision=16, linewidth=200)
 
 # --- Get some info on the wing geometry ---
 SPAN_INDEX = wingGeometry["spanIndex"]
-CHOARD_INDEX = wingGeometry["chordIndex"]
-VERTICAL_INDEX = wingGeometry["verticalIndex"]
 INDEX_STRINGS = ["x", "y", "z"]
 
 # Flow conditions that OpenAeroStruct reads from inputs instead of the AeroProblem:
@@ -443,7 +441,7 @@ if args.nMeld is None:
 else:
     MELD_MESH_FACTOR = args.nMeld
 
-# Multiply by 2 for VLM because we'll be transferring to top and bottom of wingbox
+# Multiply by 3 for VLM because we'll be transferring to top and bottom of wingbox
 if usingVLM:
     MELD_MESH_FACTOR *= 3
 
@@ -750,8 +748,6 @@ class AnalysisPoint(Multipoint):
             self.add_subsystem("PlanformValues", wimpressCalcComp)
 
             if args.addPlanformCons:
-                wimpressFuncs = {}
-                wimpressCalc.evalFunctions(wimpressFuncs)
                 self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
                 for varName in PLANFORM_CON_INPUT_NAMES:
                     self.connect(f"PlanformValues.{varName}", f"PlanformCons.{varName}")
@@ -1001,7 +997,6 @@ class AnalysisPoint(Multipoint):
                 fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
                 scenario.coupling.aero.mphys_set_ap(fp)
                 scenario.aero_post.mphys_set_ap(fp)
-                alphaDVName = f"{self.fpName}_AOA"
                 self.connect(
                     alphaDVName,
                     [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
@@ -1114,7 +1109,7 @@ flightPointProb.model = AnalysisPoint()
 
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm, work_dir=outputDir)
-includeFuelMassConstraints = args.useFuelMassDVs  # and hasCruisePoint
+includeFuelMassConstraints = args.useFuelMassDVs
 includeFuelVolumeConstraint = (
     includeFuelMassConstraints and args.task in ["opt", "check"] and (args.span or args.taper or args.shape)
 )
@@ -1207,7 +1202,6 @@ if args.task != "trim":
                 # The centre wingbox TE spar location constraint is already handled by DVCon, here we just need to constrain that, at the landing gear spanwise coordinate:
                 # - TE chordwise coordinate must be at least it's initial value
                 # - TE Spar coordinate must be at least it's initial value
-                wimpressFuncs = None
                 flightPointProb.model.add_constraint(
                     "PlanformCons.forwardCGX",
                     upper=wingGeometry["wing"]["forwardCGX"],
@@ -2018,7 +2012,6 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                 if ptRank == 0:
                     print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
                 pertDVs = copy.deepcopy(origDVs)
-                dvPertSize = stepSize / dvScales[dvName]
                 dvPert = stepSize / dvScales[dvName]
                 pertDVs[dvName] += dvPert
 
