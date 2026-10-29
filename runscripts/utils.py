@@ -344,12 +344,14 @@ def addDesignVarsFromOpenMDAO(optProb, omProb):
                 )
         if dv["scaler"] is None:
             dv["scaler"] = 1.0
+        # OpenMDAO stores the bounds unscaled, which is also what pyOptSparse expects, so they must not be divided by
+        # the scaler (older OpenMDAO versions stored them scaled)
         optProb.addVarGroup(
             dvName,
             nVars=dv["global_size"],
             value=dv["value"],
-            lower=None if dv["lower"] is None else dv["lower"] / dv["scaler"],
-            upper=None if dv["upper"] is None else dv["upper"] / dv["scaler"],
+            lower=dv["lower"],
+            upper=dv["upper"],
             scale=dv["scaler"],
         )
 
@@ -383,12 +385,13 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
         scale = con["scaler"]
 
     # Get bounds
-    # The bounds stored in the con are already scaled so we need to un-scale them
+    # OpenMDAO stores the bounds unscaled, which is also what pyOptSparse expects, so they must not be divided by the
+    # scaler (older OpenMDAO versions stored them scaled)
     if con["equals"] is not None:
-        lb = ub = con["equals"] / scale
+        lb = ub = con["equals"]
     else:
-        lb = None if con["lower"] is None else con["lower"] / scale
-        ub = None if con["upper"] is None else con["upper"] / scale
+        lb = con["lower"]
+        ub = con["upper"]
 
     # get size
     size = con["global_size"] if con["distributed"] else con["size"]
@@ -429,8 +432,12 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
                     # we can safely remove from the wrt list
                     wrt.remove(dvPromName)
         jac = sparseJac
-        ub += offsets
-        lb += offsets
+        # Don't use in-place addition here, the bounds are OpenMDAO's own metadata arrays, and lb and ub are the same
+        # object for equality constraints
+        if ub is not None:
+            ub = ub + offsets
+        if lb is not None:
+            lb = lb + offsets
     else:
         jac = None
 
