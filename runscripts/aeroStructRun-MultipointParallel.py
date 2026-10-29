@@ -1070,7 +1070,7 @@ class AnalysisPoint(Multipoint):
                 atol=1e-4 * args.tolFactor,
                 rtol=1e-8 * args.tolFactor,
                 use_aitken=not args.noAitken,
-                aitken_initial_factor=0.5,
+                aitken_initial_factor=args.aitkenInitFactor,
                 aitken_max_factor=1.2,
                 # reraise_child_analysiserror=True,
                 # use_apply_nonlinear=True, This doesn't work
