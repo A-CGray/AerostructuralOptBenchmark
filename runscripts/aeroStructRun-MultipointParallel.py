@@ -85,6 +85,8 @@ from utils import (
     getRelevantInputs,
     getAeroForceName,
     computeProcsPerMember,
+    gatherMergedDict,
+    gatherUnion,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -1393,11 +1395,7 @@ for con in performanceProb.model.get_constraints().values():
                 gradFuncs.append(out)
 # We need to call addDVsAsFunctions with the same inputs on all procs because I don't think multipoint does any
 # collection across procs
-allDVsForObjCon = globalComm.allgather(dvsForObjCon)
-dvsForObjCon = []
-for dvList in allDVsForObjCon:
-    dvsForObjCon += dvList
-dvsForObjCon = list(set(dvsForObjCon))
+dvsForObjCon = gatherUnion(globalComm, dvsForObjCon)
 MP.addDVsAsFunctions(dvsForObjCon)
 
 # broadcast gradFuncs to all procs in this set
@@ -1691,13 +1689,8 @@ if args.task != "check":
     # Run the model to initialize everything
     # ==============================================================================
     funcs = runAnalysesRobustly(args.initDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
-    # Before proceeding, combine the function values from all flight points on the root proc and broadcast to the rest
-    gatheredFuncs = globalComm.gather(funcs, root=0)
-    funcs = {}
-    if globalRank == 0:
-        for func in gatheredFuncs:
-            funcs.update(func)
-    funcs = globalComm.bcast(funcs, root=0)
+    # Before proceeding, combine the function values from all flight points and send them to every proc
+    funcs = gatherMergedDict(globalComm, funcs)
     funcs = objCon(funcs, True, None)
     if ptRank == 0:
         pp(funcs)
@@ -1712,12 +1705,7 @@ if len(args.postInitDVs) != 0:
             evalFuncs=dispFuncs,
             writeSolution=args.task == "analysis",
         )
-        gatheredFuncs = globalComm.gather(funcs, root=0)
-        funcs = {}
-        if globalRank == 0:
-            for func in gatheredFuncs:
-                funcs.update(func)
-        funcs = globalComm.bcast(funcs, root=0)
+        funcs = gatherMergedDict(globalComm, funcs)
         funcs = objCon(funcs, True, None)
 
 if args.task == "polar":
@@ -1812,15 +1800,8 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                         flightPointProb, getSource(flightPointProb.model, output), dvOnly=True
                     )
         relevantDVs = [getPromName(flightPointProb.model, inp) for inp in relevantDVs]
-        relevantDVs = list(set(relevantDVs))
         # Gather the relevant DVs from all procs, combine them into a single list, then send back to all procs
-        allRelevantDVs = globalComm.gather(relevantDVs, root=0)
-        if globalRank == 0:
-            relevantDVs = []
-            for rdvs in allRelevantDVs:
-                relevantDVs += rdvs
-            relevantDVs = list(set(relevantDVs))
-        relevantDVs = globalComm.bcast(relevantDVs, root=0)
+        relevantDVs = gatherUnion(globalComm, relevantDVs)
         if ptRank == 0:
             print("and thus on design variables:", flush=True)
             for dv in relevantDVs:
@@ -2089,11 +2070,7 @@ outputData[f"{localFlightPoint.name}-TipZDisp"] = tipZDisp
 outputData[f"{localFlightPoint.name}-TipTwist"] = tipTwist
 
 # Accumulate the data from all flight points on the root proc
-gatheredOutputs = globalComm.gather(outputData, root=0)
-outputData = {}
-if globalRank == 0:
-    for output in gatheredOutputs:
-        outputData.update(output)
+outputData = gatherMergedDict(globalComm, outputData, doBroadcast=False)
 
 # Add outputs from the performance problem
 performanceOutputs = performanceProb.model.list_outputs(return_format="dict", print_arrays=False)

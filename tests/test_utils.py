@@ -7,15 +7,31 @@ import unittest
 # External Python modules
 # ==============================================================================
 from hypothesis import given
-from hypothesis.strategies import integers
+from hypothesis.strategies import integers, lists, text
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from utils import computeProcsPerMember
+from utils import computeProcsPerMember, gatherMergedDict, gatherUnion
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
+
+
+class FakeComm:
+    """Imitates an mpi4py communicator as seen from one rank, returning pre-set data for every rank."""
+
+    def __init__(self, rank: int, allRankData: list):
+        self.rank = rank
+        self.allRankData = allRankData
+
+    def allgather(self, data):
+        return list(self.allRankData)
+
+    def gather(self, data, root=0):
+        if self.rank == root:
+            return list(self.allRankData)
+        return None
 
 
 class TestComputeProcsPerMember(unittest.TestCase):
@@ -48,6 +64,46 @@ class TestComputeProcsPerMember(unittest.TestCase):
         """Assert that a ValueError is raised when there are no members to split the processors between."""
         with self.assertRaises(ValueError):
             computeProcsPerMember(4, 0)
+
+
+class TestGatherMergedDict(unittest.TestCase):
+    def test_dicts_from_all_ranks_merged_on_every_rank(self):
+        """Assert that every rank, not just the root, gets one dict holding the entries from every rank's dict."""
+        allRankData = [{"a": 1}, {"b": 2}, {"c": 3}]
+        for rank in range(len(allRankData)):
+            comm = FakeComm(rank, allRankData)
+            self.assertEqual(gatherMergedDict(comm, allRankData[rank]), {"a": 1, "b": 2, "c": 3})
+
+    def test_later_rank_wins_for_duplicate_keys(self):
+        """
+        Given two ranks that both have a value for the same key,
+        when their dicts are merged,
+        then the merged dict holds the value from the higher rank.
+        """
+        allRankData = [{"a": 1, "b": 1}, {"a": 2}]
+        comm = FakeComm(0, allRankData)
+        self.assertEqual(gatherMergedDict(comm, allRankData[0]), {"a": 2, "b": 1})
+
+    def test_without_broadcast_only_root_gets_result(self):
+        """
+        Given dicts on two ranks,
+        when they are merged without broadcasting,
+        then rank 0 gets the merged dict and rank 1 gets an empty dict.
+        """
+        allRankData = [{"a": 1}, {"b": 2}]
+        rootComm = FakeComm(0, allRankData)
+        otherComm = FakeComm(1, allRankData)
+        self.assertEqual(gatherMergedDict(rootComm, allRankData[0], doBroadcast=False), {"a": 1, "b": 2})
+        self.assertEqual(gatherMergedDict(otherComm, allRankData[1], doBroadcast=False), {})
+
+
+class TestGatherUnion(unittest.TestCase):
+    @given(lists(lists(text()), min_size=1))
+    def test_result_is_sorted_union_of_all_ranks(self, allRankItems):
+        """Assert that the gathered result is the sorted list of every distinct item found on any rank."""
+        expected = sorted({item for items in allRankItems for item in items})
+        comm = FakeComm(0, allRankItems)
+        self.assertEqual(gatherUnion(comm, allRankItems[0]), expected)
 
 
 if __name__ == "__main__":

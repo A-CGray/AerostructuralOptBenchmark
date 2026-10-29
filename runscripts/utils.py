@@ -4,7 +4,7 @@
 import re
 import os
 import sys
-from typing import Optional, Union
+from typing import Iterable, Optional, Union
 
 # ==============================================================================
 # External Python modules
@@ -263,6 +263,56 @@ def computeProcsPerMember(numProcs: int, numMembers: int) -> list[int]:
     for ii in range(1, extraProcs + 1):
         procsPerMember[-ii] += 1
     return procsPerMember
+
+
+def gatherMergedDict(comm, localDict: dict, doBroadcast: bool = True) -> dict:
+    """Merge the dicts from every rank of a communicator into one dict
+
+    Parameters
+    ----------
+    comm : MPI communicator
+        Communicator to gather over
+    localDict : dict
+        This rank's dict
+    doBroadcast : bool, optional
+        Whether every rank should get the merged dict, otherwise only rank 0 gets it, by default True
+
+    Returns
+    -------
+    dict
+        The dicts merged in rank order, so a key on several ranks gets the value from the highest one.
+        Without ``doBroadcast``, ranks other than 0 get an empty dict.
+    """
+    if doBroadcast:
+        allDicts = comm.allgather(localDict)
+    else:
+        allDicts = comm.gather(localDict, root=0)
+    mergedDict = {}
+    if allDicts is not None:
+        for rankDict in allDicts:
+            mergedDict.update(rankDict)
+    return mergedDict
+
+
+def gatherUnion(comm, localItems: Iterable) -> list:
+    """Gather the items from every rank of a communicator into one sorted list without duplicates, on every rank
+
+    Parameters
+    ----------
+    comm : MPI communicator
+        Communicator to gather over
+    localItems : Iterable
+        This rank's items, which must be sortable
+
+    Returns
+    -------
+    list
+        Sorted union of the items from every rank
+    """
+    allItems = set()
+    for rankItems in comm.allgather(list(localItems)):
+        allItems.update(rankItems)
+    return sorted(allItems)
 
 
 # ==============================================================================
