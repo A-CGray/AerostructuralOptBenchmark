@@ -15,6 +15,7 @@ import openmdao.api as om
 
 # get_relevance is OpenMDAO-internal (not in openmdao.api or the docs), so this is the only place that imports it
 from openmdao.utils.relevance import get_relevance
+from openmdao.core.constants import _SetupStatus
 from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
@@ -460,7 +461,7 @@ def getRelevantInputs(model, outputName: str, candidateNames: list[str]) -> list
     relevance = get_relevance(model, of, wrt)
     with relevance.seeds_active(fwd_seeds=tuple(candidateNames), rev_seeds=(outputName,)):
         relevantNames = [name for name in candidateNames if relevance.is_relevant(name)]
-    return model.comm.bcast(sorted(relevantNames), root=0)
+    return model.comm.bcast(sorted(set(relevantNames)), root=0)
 
 
 def getDesignVarSources(model) -> list[str]:
@@ -480,7 +481,19 @@ def allowResponsesAfterSetup(prob):
     ----------
     prob : openmdao.core.problem.Problem
         Problem that has been set up but not yet final_setup
+
+    Raises
+    ------
+    RuntimeError
+        If the problem hasn't been set up, or final_setup has already been called, so any responses added would never be
+        included
     """
+    setupStatus = prob._metadata["setup_status"]
+    if setupStatus < _SetupStatus.POST_SETUP or setupStatus >= _SetupStatus.POST_FINAL_SETUP:
+        raise RuntimeError(
+            "allowResponsesAfterSetup can only be used after setup and before final_setup, but the problem's setup "
+            f"status is {setupStatus.name}"
+        )
     problemMeta = prob.model._problem_meta
     wasStaticMode = problemMeta["static_mode"]
     problemMeta["static_mode"] = False

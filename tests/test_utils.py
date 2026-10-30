@@ -246,6 +246,11 @@ class TestGetRelevantInputs(unittest.TestCase):
         xSource = getSource(self.model, "x")
         self.assertEqual(getRelevantInputs(self.model, xSource, [xSource]), [xSource])
 
+    def test_duplicate_candidate_returned_once(self):
+        """Assert that a relevant candidate listed more than once appears only once in the result."""
+        xSource = getSource(self.model, "x")
+        self.assertEqual(getRelevantInputs(self.model, getSource(self.model, "b"), [xSource, xSource]), [xSource])
+
 
 class TestGetDesignVarSources(unittest.TestCase):
     def test_returns_source_of_each_design_variable(self):
@@ -293,6 +298,24 @@ class TestAllowResponsesAfterSetup(unittest.TestCase):
             with allowResponsesAfterSetup(self.prob):
                 raise RuntimeError("Failure while adding a response")
         self.assertEqual(self.prob.model._problem_meta["static_mode"], originalStaticMode)
+
+    def test_after_final_setup_raises(self):
+        """
+        Given a problem on which final_setup has already been called,
+        when the context manager is entered,
+        then an error is raised, because responses added now would never be included.
+        """
+        self.prob.final_setup()
+        with self.assertRaises(RuntimeError):
+            with allowResponsesAfterSetup(self.prob):
+                self.prob.model.add_constraint("y", upper=1.0)
+
+    def test_before_setup_raises(self):
+        """Assert that entering the context manager on a problem that hasn't been set up raises an error."""
+        prob = om.Problem()
+        with self.assertRaises(RuntimeError):
+            with allowResponsesAfterSetup(prob):
+                pass
 
 
 if __name__ == "__main__":
