@@ -77,8 +77,8 @@ class TestGetNonlinearSolverOptions(unittest.TestCase):
         """
         Given a nonlinear analysis,
         when getNonlinearSolverOptions is called,
-        then the Newton and continuation options are the ones both runscripts used before they were shared, with the
-        agreed continuation iteration limit.
+        then the Newton and continuation options are the ones the multipoint runscript used before they were shared,
+        which structRun.py also used except for its lower continuation iteration limit.
         """
         newtonOptions, continuationOptions = getNonlinearSolverOptions(Namespace(nonlinear=True))
         self.assertEqual(

@@ -60,7 +60,6 @@ chordIndex = wingGeometry["chordIndex"]
 
 # set these for convenience
 comm = MPI.COMM_WORLD
-rank = comm.rank
 isComplex = TACS.dtype == complex
 
 # --- General options ---
