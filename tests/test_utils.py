@@ -18,6 +18,7 @@ from hypothesis.strategies import integers, lists, text
 # ==============================================================================
 from utils import (
     BANNER_LINE,
+    allowResponsesAfterSetup,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
@@ -263,6 +264,35 @@ class TestGetDesignVarSources(unittest.TestCase):
         prob.final_setup()
         expected = [getSource(prob.model, "x"), getSource(prob.model, "p")]
         self.assertEqual(sorted(getDesignVarSources(prob.model)), sorted(expected))
+
+
+class TestAllowResponsesAfterSetup(unittest.TestCase):
+    def setUp(self):
+        self.prob = om.Problem()
+        ivc = self.prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", 1.0)
+        self.prob.model.add_subsystem("comp", om.ExecComp("y = 2*x"), promotes=["*"])
+        self.prob.model.add_design_var("x")
+        self.prob.setup()
+
+    def test_constraint_added_inside_is_included_by_final_setup(self):
+        """
+        Given a problem that has already been set up,
+        when a constraint is added inside the context manager and final_setup is then called,
+        then the problem's constraints include it.
+        """
+        with allowResponsesAfterSetup(self.prob):
+            self.prob.model.add_constraint("y", upper=1.0)
+        self.prob.final_setup()
+        self.assertIn("y", self.prob.model.get_constraints())
+
+    def test_static_mode_restored_after_error(self):
+        """Assert that the problem's static mode flag is restored even when an error is raised inside the context."""
+        originalStaticMode = self.prob.model._problem_meta["static_mode"]
+        with self.assertRaises(RuntimeError):
+            with allowResponsesAfterSetup(self.prob):
+                raise RuntimeError("Failure while adding a response")
+        self.assertEqual(self.prob.model._problem_meta["static_mode"], originalStaticMode)
 
 
 if __name__ == "__main__":

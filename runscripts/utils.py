@@ -4,6 +4,7 @@
 import re
 import os
 import sys
+from contextlib import contextmanager
 from typing import Iterable, Optional, Union
 
 # ==============================================================================
@@ -465,6 +466,28 @@ def getRelevantInputs(model, outputName: str, candidateNames: list[str]) -> list
 def getDesignVarSources(model) -> list[str]:
     """Get the absolute source names of all design variables declared in an OpenMDAO model"""
     return [meta["source"] for meta in model.get_design_vars().values()]
+
+
+@contextmanager
+def allowResponsesAfterSetup(prob):
+    """Allow responses (constraints/objectives) to be added to a problem's model after setup
+
+    Responses added after setup normally go into OpenMDAO's "static" responses, which final_setup ignores. Inside this
+    context they are added as if setup were still running, so the next final_setup includes them. This relies on
+    OpenMDAO's private ``_problem_meta["static_mode"]`` flag, which is restored even if an error is raised.
+
+    Parameters
+    ----------
+    prob : openmdao.core.problem.Problem
+        Problem that has been set up but not yet final_setup
+    """
+    problemMeta = prob.model._problem_meta
+    wasStaticMode = problemMeta["static_mode"]
+    problemMeta["static_mode"] = False
+    try:
+        yield
+    finally:
+        problemMeta["static_mode"] = wasStaticMode
 
 
 def addDesignVarsFromOpenMDAO(optProb, omProb):

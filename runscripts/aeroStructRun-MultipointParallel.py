@@ -84,6 +84,7 @@ from utils import (
     AverageComp,
     getRelevantInputs,
     getDesignVarSources,
+    allowResponsesAfterSetup,
     getAeroForceName,
     computeProcsPerMember,
     gatherMergedDict,
@@ -1263,15 +1264,6 @@ for _, inp in performanceProb.model.list_inputs(out_stream=None):
     if promName not in performanceProbInputs and "." not in promName:
         performanceProbInputs.append(promName)
 performanceProbInputs = globalComm.bcast(list(set(performanceProbInputs)), root=0)
-# For OpenMDAO's relevance checking to work, which we need to automatically figure out which design variables the
-# outputs of the performance model depend on, we need to declare the inputs to the performance model that come from the
-# flight point models as design variables in the performance model. For some godforsaken reason, the only way I can find
-# to successfully add design variables after setup has been called (which I need so that I can call `list_inputs`) is to
-# temporarily toggle the static_mode flag.
-performanceProb.model._problem_meta["static_mode"] = not performanceProb.model._problem_meta["static_mode"]
-for inpName in performanceProbInputs:
-    performanceProb.model.add_design_var(inpName)
-performanceProb.model._problem_meta["static_mode"] = not performanceProb.model._problem_meta["static_mode"]
 
 # Define the map from the outputs of the flight point models to the inputs required for the performance calculation
 # model
@@ -1304,22 +1296,22 @@ flightPoint2PerfMap = {v: k for k, v in perf2FlightPointMap.items()}
 if ptRank == 0:
     pp(perf2FlightPointMap)
 
-# Later on, I want to use OpenMDAO's relevance checking to figure out which design variables the flight point outputs
-# that get passed to the performance model depend on. Unfortunately, OpenMDAO's relevance checking only works for
-# objectives and constraints, so as a workaround, I'm going to declare these outputs as constraints with no bounds.
-# Like above, this only works if I temporarily toggle the static_mode flag.
-fakeConstraintPrefix = "_relevanceCheck"
-flightPointProb.model._problem_meta["static_mode"] = not flightPointProb.model._problem_meta["static_mode"]
+# The coupled adjoint solver's rhs_checking ("auto") only creates its solution cache if, at final_setup, some declared
+# responses depend on others. The flight point outputs that feed the performance model (masses, fuel burn, lift) are
+# such responses, and caching their adjoints saves most of the cruise adjoint solves, so we declare them as unbounded
+# constraints. They can only be declared after setup, because that's when we know which outputs this flight point has.
+# These constraints are skipped when building gradFuncs and the pyOptSparse problem.
+PERFORMANCE_OUTPUT_ALIAS_PREFIX = "_performanceOutput"
 existingResponses = (
     list(flightPointProb.model._responses.keys())
     + list(flightPointProb.model._static_responses.keys())
     + list(flightPointProb.model._design_vars.keys())
     + list(flightPointProb.model._static_design_vars.keys())
 )
-for outputName in perf2FlightPointMap.values():
-    if outputName in flightPointProbOutputs and outputName not in existingResponses:
-        flightPointProb.model.add_constraint(outputName, alias=f"{fakeConstraintPrefix}{outputName}")
-flightPointProb.model._problem_meta["static_mode"] = not flightPointProb.model._problem_meta["static_mode"]
+with allowResponsesAfterSetup(flightPointProb):
+    for outputName in perf2FlightPointMap.values():
+        if outputName in flightPointProbOutputs and outputName not in existingResponses:
+            flightPointProb.model.add_constraint(outputName, alias=f"{PERFORMANCE_OUTPUT_ALIAS_PREFIX}{outputName}")
 
 
 # Need to call final_setup so that sizes of inputs and outputs are figured out correctly, otherwise calling
@@ -1360,9 +1352,11 @@ for dv in flightPointProb.model.get_design_vars().values():
     designVariables[dv["name"]] = dv
 
 # Any constraints or objectives that are direct outputs of the flight point models and aren't linear should be added to
-# gradFuncs
+# gradFuncs, apart from the performance output constraints, which are only added to gradFuncs below if a performance
+# constraint depends on them
 for con in flightPointProb.model.get_constraints().values():
-    if not con["linear"]:
+    isPerformanceOutput = con["alias"] is not None and con["alias"].startswith(PERFORMANCE_OUTPUT_ALIAS_PREFIX)
+    if not con["linear"] and not isPerformanceOutput:
         conName = getPromName(flightPointProb.model, con["source"])
         gradFuncs.append(conName)
 
@@ -1376,7 +1370,8 @@ relevantFlightPointOutputs = {}
 dvsForObjCon = []
 performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceProbInputs]
 for con in performanceProb.model.get_constraints().values():
-    # Step 1:
+    # Step 1: find which performance model inputs this constraint depends on, getRelevantInputs takes the candidate
+    # inputs explicitly so they don't need to be declared as design variables
     fullConName = con["source"]
     promConName = getPromName(performanceProb.model, fullConName)
     relevantInputs = getRelevantInputs(performanceProb.model, fullConName, performanceInputSources)
@@ -1751,13 +1746,11 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # Define constraints
     # ==============================================================================
     # Add all constraints from the flight point model, addConstraintFromOpenMDAO will automatically figure out which DVs
-    # each constraint depends on using the OpenMDAO model. But we need to skip the fake constraints we added above to
-    # get relevance checking to work.
+    # each constraint depends on using the OpenMDAO model. The performance output constraints are only there for adjoint
+    # caching, so they're skipped.
     for con in flightPointProb.model.get_constraints().values():
-        if con["alias"] is not None and con["alias"].startswith(fakeConstraintPrefix):
-            if ptRank == 0:
-                print(f"Skipping fake constraint {con['name']}", flush=True)
-        else:
+        isPerformanceOutput = con["alias"] is not None and con["alias"].startswith(PERFORMANCE_OUTPUT_ALIAS_PREFIX)
+        if not isPerformanceOutput:
             addConstraintFromOpenMDAO(con, optProb, flightPointProb, wrt="auto")
 
     # For the constraints coming from the performance model, things are more complicated because the design variables
