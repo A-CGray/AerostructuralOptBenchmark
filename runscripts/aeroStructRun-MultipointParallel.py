@@ -43,7 +43,6 @@ from adflow.mphys import ADflowBuilder
 from adflow import ADFLOW
 from openaerostruct.mphys import AeroBuilder as OASBuilder
 from idwarp import USMesh
-from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
 from tacs import TACS
 from funtofem.mphys import MeldBuilder
@@ -502,80 +501,11 @@ problemOptions = {
     "useMonitor": not args.nonlinear,
     "monitorFrequency": 1,
 }
-nonlinearOptions = {"writeNLIterSolutions": False, "printLevel": 1}
-newtonOptions = None
-continuationOptions = None
-if args.nonlinear:
-    problemOptions.update(nonlinearOptions)
-    newtonOptions = {
-        "UseEW": True,
-        "MaxLinIters": 10,
-        "skipFirstNLineSearch": 1,
-        "ForceFirstIter": True,
-        "maxIter": 20,
-    }
-    continuationOptions = {
-        "RelTol": 1e-7,
-        "UsePredictor": True,
-        "NumPredictorStates": 4,
-        "maxIter": 20,
-    }
-
-
-def setup_assembler(assembler):
-    return setupTACS.setup_tacs_assembler(assembler, args)
-
-
-def setup_tacs_problem(scenario_name, fea_assembler, problem):
-    flightPoint = flightPointsDict[scenario_name]
-    setupTACS.problem_setup(
-        scenario_name,
-        flightPoint,
-        fea_assembler,
-        problem,
-        args=args,
-        options=problemOptions,
-        newtonOptions=newtonOptions,
-        continuationOptions=continuationOptions,
-    )
-
-
-# Read in panel lengths, they're stored in a csv file along with the struct meshes
-panelLengthFileName = os.path.join(os.path.dirname(structMeshFile), "PanelLengths.csv")
-with open(panelLengthFileName, "r") as panelLengthFile:
-    panelLengths = {line.split(",")[0]: float(line.split(",")[1]) for line in panelLengthFile}
-
-
-def element_callback(dvNum, compID, compDescript, elemDescripts, specialDVs, **kwargs):
-    return setupTACS.element_callback(
-        dvNum,
-        compID,
-        compDescript,
-        elemDescripts,
-        specialDVs,
-        args,
-        nonlinear=args.nonlinear,
-        useComposite=args.useComposite,
-        usePanelLengthDVs=args.usePanelLengthDVs,
-        usePlyFractionDVs=args.usePlyFractionDVs,
-        useStiffenerPitchDVs=args.useStiffPitchDVs,
-        panelLengths=panelLengths,
-        **kwargs,
-    )
-
-
-def constraint_callback(scenario_name, fea_assembler, constraints):
-    if scenario_name == flightPoints[0].name:
-        return setupTACS.setupConstraints(scenario_name, fea_assembler, constraints, args)
-    return None
-
-
-structBuilder = TacsBuilder(
-    mesh_file=structMeshFile,
-    assembler_setup=setup_assembler,
-    element_callback=element_callback,
-    constraint_setup=constraint_callback,
-    problem_setup=setup_tacs_problem,
+structBuilder = setupTACS.createTacsBuilder(
+    args,
+    structMeshFile,
+    flightPoints,
+    problemOptions,
     coupling_loads=[MPhysVariables.Structures.Loads.AERODYNAMIC] if isAeroStruct else None,
     write_solution=False,
     res_ref=1e3,
@@ -700,10 +630,7 @@ class AnalysisPoint(Multipoint):
         disciplineVariables["struct"] = MPhysVariables.Structures
         builders["struct"] = structBuilder
 
-        structDVMap = setupTACS.buildStructDVDictMap(structBuilder.get_fea_assembler(), args)
-        if globalRank == 0:
-            with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
-                dill.dump(structDVMap, structDVMapFile)
+        setupTACS.writeStructDVMap(self.FEAAssembler, args, outputDir, globalComm)
 
         if isAeroStruct:
             # ==============================================================================
