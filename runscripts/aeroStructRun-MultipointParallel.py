@@ -348,6 +348,9 @@ else:
         raise ValueError(f"You specified {nMembers} flight points but only {len(args.procs)} processor counts")
     else:
         procsPerMember = args.procs
+fpNamesWithoutProcs = [fp.name for fp, numProcs in zip(flightPoints, procsPerMember, strict=True) if numProcs < 1]
+if len(fpNamesWithoutProcs) > 0:
+    raise ValueError(f"Every flight point needs at least one processor, but these have none: {fpNamesWithoutProcs}")
 MP.addProcessorSet("all", nMembers=nMembers, memberSizes=procsPerMember)
 
 # Create communicators
