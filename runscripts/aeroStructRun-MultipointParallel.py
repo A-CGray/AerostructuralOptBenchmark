@@ -1264,6 +1264,9 @@ performanceProb.setup(force_alloc_complex=True)
 performanceInputs = getPromotedInputNames(performanceProb)
 checkInputsHaveSources(performanceInputs, flightPointProbOutputs.keys(), globalComm)
 
+if ptRank == 0:
+    printBanner({"Performance inputs": performanceInputs})
+
 # The coupled adjoint solver's rhs_checking ("auto") only creates its solution cache if, at final_setup, some declared
 # responses depend on others. The flight point outputs that feed the performance model (masses, fuel burn, lift) are
 # such responses, and caching their adjoints saves most of the cruise adjoint solves, so we declare them as unbounded
