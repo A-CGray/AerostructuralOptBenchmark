@@ -22,7 +22,6 @@ from mpi4py import MPI
 import openmdao.api as om
 from mphys import Multipoint, MPhysVariables
 from mphys.scenarios import ScenarioStructural
-from tacs.mphys import TacsBuilder
 from tacs.mphys.utils import add_tacs_constraints
 from tacs import TACS
 from pygeo.mphys import OM_DVGEOCOMP
@@ -121,10 +120,20 @@ ffdFile = getFFDPath(level=args.ffdLevel)
 flightPoints = flightPointSets[args.flightPointSet]
 flightPointsDict = {fp.name: fp for fp in flightPoints}
 
-# Read in panel lengths, they're stored in a csv file along with the struct meshes
-panelLengthFileName = os.path.join(os.path.dirname(structMeshFile), "PanelLengths.csv")
-with open(panelLengthFileName, "r") as panelLengthFile:
-    panelLengths = {line.split(",")[0]: float(line.split(",")[1]) for line in panelLengthFile}
+# A uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical load equivalent
+# to 2.5g
+LOWER_SKIN_PRESSURE = 30e3  # Pa
+LOWER_SKIN_PRESSURE_LOAD_FACTOR = 2.5
+
+
+def addLowerSkinPressure(scenarioName, feaAssembler, problem):
+    """Add a uniform pressure over the lower skin, scaled by the flight point's load factor, except for taxi bumps"""
+    if "taxi_bump" not in scenarioName.lower():
+        flightPoint = flightPointsDict[scenarioName]
+        lSkinCompIDs = feaAssembler.selectCompIDs("L_SKIN")
+        problem.addPressureToComponents(
+            lSkinCompIDs, -flightPoint.loadFactor * LOWER_SKIN_PRESSURE / LOWER_SKIN_PRESSURE_LOAD_FACTOR
+        )
 
 
 class Top(Multipoint):
@@ -139,86 +148,21 @@ class Top(Multipoint):
             "L2convergence": 1e-20,
             "L2convergenceRel": 1e-20,
         }
-        nonlinearOptions = {"writeNLIterSolutions": False, "printLevel": 1}
-        newtonOptions = None
-        continuationOptions = None
-        if args.nonlinear:
-            problemOptions.update(nonlinearOptions)
-            newtonOptions = {
-                "UseEW": True,
-                "MaxLinIters": 10,
-                "skipFirstNLineSearch": 1,
-                "ForceFirstIter": True,
-                "maxIter": 20,
-            }
-            continuationOptions = {
-                "RelTol": 1e-7,
-                "UsePredictor": True,
-                "NumPredictorStates": 4,
-                "maxIter": 10,
-            }
-
-        def setup_assembler(assembler):
-            return setupTACS.setup_tacs_assembler(assembler, args)
-
-        def setup_tacs_problem(scenario_name, fea_assembler, problem):
-            flightPoint = flightPointsDict[scenario_name]
-            setupTACS.problem_setup(
-                scenario_name,
-                flightPoint,
-                fea_assembler,
-                problem,
-                args=args,
-                options=problemOptions,
-                newtonOptions=newtonOptions,
-                continuationOptions=continuationOptions,
-            )
-
-            if "taxi_bump" not in scenario_name.lower():
-                # Apply a uniform pressure over the lower skin, 30 kPa is almost exactly the right value to get a vertical
-                # load equivalent to 2.5g
-                lSkinCompIDs = fea_assembler.selectCompIDs("L_SKIN")
-                problem.addPressureToComponents(lSkinCompIDs, -flightPoint.loadFactor * 30e3 / 2.5)
-
-        def element_callback(dvNum, compID, compDescript, elemDescripts, specialDVs, **kwargs):
-            return setupTACS.element_callback(
-                dvNum,
-                compID,
-                compDescript,
-                elemDescripts,
-                specialDVs,
-                args,
-                nonlinear=args.nonlinear,
-                useComposite=args.useComposite,
-                usePanelLengthDVs=args.usePanelLengthDVs,
-                usePlyFractionDVs=args.usePlyFractionDVs,
-                useStiffenerPitchDVs=args.useStiffPitchDVs,
-                panelLengths=panelLengths,
-                **kwargs,
-            )
-
-        def constraint_callback(scenario_name, fea_assembler, constraints):
-            if scenario_name == flightPoints[0].name:
-                return setupTACS.setupConstraints(scenario_name, fea_assembler, constraints, args)
-            return None
 
         for ii, flightPoint in enumerate(flightPoints):
             scenarioName = flightPoint.name
 
-            structBuilder = TacsBuilder(
-                mesh_file=structMeshFile,
-                assembler_setup=setup_assembler,
-                element_callback=element_callback,
-                constraint_setup=constraint_callback,
-                problem_setup=setup_tacs_problem,
+            structBuilder = setupTACS.createTacsBuilder(
+                args,
+                structMeshFile,
+                flightPoints,
+                problemOptions,
+                extraProblemSetup=addLowerSkinPressure,
                 write_solution=not args.noFiles,
             )
             structBuilder.initialize(self.comm)
             self.FEAAssembler = structBuilder.get_fea_assembler()
-            structDVMap = setupTACS.buildStructDVDictMap(self.FEAAssembler, args)
-            if rank == 0:
-                with open(os.path.join(outputDir, "structDVMap.pkl"), "wb") as structDVMapFile:
-                    dill.dump(structDVMap, structDVMapFile)
+            setupTACS.writeStructDVMap(self.FEAAssembler, args, outputDir, comm)
 
             ################################################################################
             # MPHYS setup
