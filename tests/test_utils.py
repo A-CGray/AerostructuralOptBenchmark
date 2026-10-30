@@ -16,7 +16,17 @@ from hypothesis.strategies import integers, lists, text
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-from utils import BANNER_LINE, computeProcsPerMember, gatherMergedDict, gatherUnion, printBanner, setLocalVals
+from utils import (
+    BANNER_LINE,
+    computeProcsPerMember,
+    gatherMergedDict,
+    gatherUnion,
+    getDesignVarSources,
+    getRelevantInputs,
+    getSource,
+    printBanner,
+    setLocalVals,
+)
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
@@ -171,6 +181,88 @@ class TestPrintBanner(unittest.TestCase):
     def test_banner_line_matches_existing_banners(self):
         """Assert that the banner line is identical to the line the runscript's banners printed before."""
         self.assertEqual(BANNER_LINE, "===============================================================================")
+
+
+def buildRelevanceTestProblem() -> om.Problem:
+    """
+    Build a small model where b depends on x and y, c depends on z, and d depends on an unconnected promoted input p.
+
+    No design variables or responses are declared, so any relevance information must come from explicit seeds.
+    """
+    prob = om.Problem()
+    ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+    ivc.add_output("x", 1.0)
+    ivc.add_output("y", 1.0)
+    ivc.add_output("z", 1.0)
+    prob.model.add_subsystem("compA", om.ExecComp("a = 2*x"), promotes=["*"])
+    prob.model.add_subsystem("compB", om.ExecComp("b = a + y"), promotes=["*"])
+    prob.model.add_subsystem("compC", om.ExecComp("c = 3*z"), promotes=["*"])
+    prob.model.add_subsystem("compD", om.ExecComp("d = p**2"), promotes=["*"])
+    prob.setup()
+    prob.final_setup()
+    return prob
+
+
+class TestGetRelevantInputs(unittest.TestCase):
+    def setUp(self):
+        self.prob = buildRelevanceTestProblem()
+        self.model = self.prob.model
+
+    def getSources(self, names: list[str]) -> list[str]:
+        return [getSource(self.model, name) for name in names]
+
+    def test_output_depends_on_upstream_candidates_only(self):
+        """
+        Given an output that depends on some of the candidates,
+        when its relevant inputs are found,
+        then exactly the candidates upstream of it are returned.
+        """
+        relevantNames = getRelevantInputs(self.model, getSource(self.model, "b"), self.getSources(["x", "y", "z"]))
+        self.assertEqual(sorted(relevantNames), sorted(self.getSources(["x", "y"])))
+
+    def test_unrelated_candidates_excluded(self):
+        """Assert that an output that depends on none of the candidates gets an empty list."""
+        relevantNames = getRelevantInputs(self.model, getSource(self.model, "c"), self.getSources(["x", "y"]))
+        self.assertEqual(relevantNames, [])
+
+    def test_empty_candidates_returns_empty_list(self):
+        """
+        Given no candidates,
+        when the relevant inputs of an output are found,
+        then an empty list is returned rather than every variable in the model.
+        """
+        relevantNames = getRelevantInputs(self.model, getSource(self.model, "b"), [])
+        self.assertEqual(relevantNames, [])
+
+    def test_auto_ivc_input_source_found(self):
+        """Assert that an input fed by OpenMDAO's automatic IVC is found as relevant through its `_auto_ivc` source."""
+        pSource = getSource(self.model, "p")
+        relevantNames = getRelevantInputs(self.model, getSource(self.model, "d"), [pSource, getSource(self.model, "x")])
+        self.assertEqual(relevantNames, [pSource])
+
+    def test_candidate_equal_to_output_is_relevant(self):
+        """Assert that a candidate that is the output itself, like a constraint on a design variable, is relevant."""
+        xSource = getSource(self.model, "x")
+        self.assertEqual(getRelevantInputs(self.model, xSource, [xSource]), [xSource])
+
+
+class TestGetDesignVarSources(unittest.TestCase):
+    def test_returns_source_of_each_design_variable(self):
+        """
+        Given design variables on an IVC output and on an unconnected promoted input,
+        when their sources are found,
+        then the source of each design variable is returned, including the automatic IVC source of the input.
+        """
+        prob = om.Problem()
+        ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", 1.0)
+        prob.model.add_subsystem("comp", om.ExecComp("y = x + p"), promotes=["*"])
+        prob.model.add_design_var("x")
+        prob.model.add_design_var("p")
+        prob.setup()
+        prob.final_setup()
+        expected = [getSource(prob.model, "x"), getSource(prob.model, "p")]
+        self.assertEqual(sorted(getDesignVarSources(prob.model)), sorted(expected))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,9 @@ from typing import Iterable, Optional, Union
 # ==============================================================================
 import dill
 import openmdao.api as om
+
+# get_relevance is OpenMDAO-internal (not in openmdao.api or the docs), so this is the only place that imports it
+from openmdao.utils.relevance import get_relevance
 from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
@@ -421,36 +424,47 @@ def convertSensDict(openmdaoSensDict):
     return sensDict
 
 
-def getRelevantInputs(omProb, outputName, dvOnly=False):
-    """Find the inputs that a given output depends on using OpenMDAO's relevance system
+def getRelevantInputs(model, outputName: str, candidateNames: list[str]) -> list[str]:
+    """Find which of a list of candidate variables a given output depends on, using OpenMDAO's relevance graph
+
+    A candidate is relevant to the output if there is a path through the model's data flow graph from the candidate to
+    the output, i.e. if changing the candidate can change the output. A candidate that is the output itself is
+    relevant.
+
+    The relevance object is built from explicit seeds (the output and the candidates), so neither needs to be declared
+    as a design variable or response. This uses `openmdao.utils.relevance.get_relevance`, which is internal to OpenMDAO
+    rather than public API.
 
     Parameters
     ----------
-    omProb : OpenMDAO Problem
-        The OpenMDAO problem to extract the relevant inputs from
+    model : openmdao.core.group.Group
+        Top level group of the OpenMDAO problem, after final_setup
     outputName : str
-        The name of the output to find the relevant inputs for, should be the absolute name
-    dvOnly : bool, optional
-        Whether to limit the search to inputs that have been declared as design variables, by default False
+        Absolute source name of the output
+    candidateNames : list[str]
+        Absolute source names of the variables the output might depend on, e.g. design variable sources
 
     Returns
     -------
-    list
-        Absolute names of all inputs that the output depends on
+    list[str]
+        Sorted absolute names of the candidates the output depends on, the same on every proc of the model's comm
     """
-    wrt = []
-    relevance = omProb.model._relevance
-    if dvOnly:
-        namesToCheck = [dvMetadata["source"] for dvMetadata in omProb.model.get_design_vars().values()]
-    else:
-        namesToCheck = [inputData[0] for inputData in omProb.model.list_inputs(out_stream=None)]
-    with relevance.seeds_active(rev_seeds=(outputName,)):
-        for name in namesToCheck:
-            if relevance.is_relevant(name):
-                wrt.append(name)
-    wrt = list(set(wrt))
-    wrt = omProb.model.comm.bcast(wrt, root=0)
-    return wrt
+    # With no candidates, get_relevance returns a permanently inactive relevance object that reports every variable as
+    # relevant. Only the candidates are checked below so the result would still be empty, but return early so that never
+    # depends on the inactive object
+    if len(candidateNames) == 0:
+        return []
+    of = {outputName: {"source": outputName, "parallel_deriv_color": None}}
+    wrt = {name: {"source": name, "parallel_deriv_color": None} for name in candidateNames}
+    relevance = get_relevance(model, of, wrt)
+    with relevance.seeds_active(fwd_seeds=tuple(candidateNames), rev_seeds=(outputName,)):
+        relevantNames = [name for name in candidateNames if relevance.is_relevant(name)]
+    return model.comm.bcast(sorted(relevantNames), root=0)
+
+
+def getDesignVarSources(model) -> list[str]:
+    """Get the absolute source names of all design variables declared in an OpenMDAO model"""
+    return [meta["source"] for meta in model.get_design_vars().values()]
 
 
 def addDesignVarsFromOpenMDAO(optProb, omProb):
@@ -504,7 +518,7 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
     name = getPromName(omProb.model, con["source"])
 
     if isinstance(wrt, str) and wrt.lower() == "auto":
-        wrt = getRelevantInputs(omProb, con["source"], dvOnly=True)
+        wrt = getRelevantInputs(omProb.model, con["source"], getDesignVarSources(omProb.model))
         wrt = [getPromName(omProb.model, var) for var in wrt]
 
     # Get the scaling factor if there is one

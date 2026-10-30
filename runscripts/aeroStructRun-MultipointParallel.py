@@ -83,6 +83,7 @@ from utils import (
     getTriangulatedSurface,
     AverageComp,
     getRelevantInputs,
+    getDesignVarSources,
     getAeroForceName,
     computeProcsPerMember,
     gatherMergedDict,
@@ -1373,11 +1374,12 @@ for obj in flightPointProb.model.get_objectives().values():
 # the gradients of because they're inputs to the performance model that computes further objectives/constraints.
 relevantFlightPointOutputs = {}
 dvsForObjCon = []
+performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceProbInputs]
 for con in performanceProb.model.get_constraints().values():
     # Step 1:
     fullConName = con["source"]
     promConName = getPromName(performanceProb.model, fullConName)
-    relevantInputs = getRelevantInputs(performanceProb, fullConName, dvOnly=True)
+    relevantInputs = getRelevantInputs(performanceProb.model, fullConName, performanceInputSources)
     relevantInputs = [getPromName(performanceProb.model, inp) for inp in relevantInputs]
     # Step 2:
     outputs = []
@@ -1786,7 +1788,9 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
                 else:
                     # Otherwise we need to figure out which DVs it depends on
                     relevantDVs += getRelevantInputs(
-                        flightPointProb, getSource(flightPointProb.model, output), dvOnly=True
+                        flightPointProb.model,
+                        getSource(flightPointProb.model, output),
+                        getDesignVarSources(flightPointProb.model),
                     )
         relevantDVs = [getPromName(flightPointProb.model, inp) for inp in relevantDVs]
         # Gather the relevant DVs from all procs, combine them into a single list, then send back to all procs
