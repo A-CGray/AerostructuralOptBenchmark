@@ -454,8 +454,10 @@ def checkInputsHaveSources(inputNames: Iterable[str], localOutputNames: Iterable
     ValueError
         If any input name is not an output name on any rank, listing the missing names
     """
-    allOutputNames = set(gatherUnion(comm, localOutputNames))
-    missingNames = sorted(set(inputNames) - allOutputNames)
+    inputNames = set(inputNames)
+    # Only send the local outputs that are inputs, as each rank may have thousands of outputs
+    foundNames = set(gatherUnion(comm, inputNames & set(localOutputNames)))
+    missingNames = sorted(inputNames - foundNames)
     if len(missingNames) > 0:
         raise ValueError(f"These inputs are not outputs of any flight point model: {missingNames}")
 

@@ -5,7 +5,6 @@ import contextlib
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +16,7 @@ import unittest
 import numpy as np
 import openmdao.api as om
 from hypothesis import assume, given
-from hypothesis.strategies import data, integers, lists, text
+from hypothesis.strategies import data, integers, lists, sampled_from, text
 
 # ==============================================================================
 # Extension modules
@@ -66,18 +65,29 @@ if MPI.COMM_WORLD.rank == 0:
 
 
 class FakeComm:
-    """Imitates an mpi4py communicator as seen from one rank, returning pre-set data for every rank."""
+    """Imitates an mpi4py communicator as seen from one rank, returning pre-set data for the other ranks.
+
+    The data this rank sends replaces its own pre-set entry, and the last data sent is kept in `sentData`.
+    """
 
     def __init__(self, rank: int, allRankData: list):
         self.rank = rank
         self.allRankData = allRankData
+        self.sentData = None
+
+    def _collect(self, data) -> list:
+        self.sentData = data
+        collected = list(self.allRankData)
+        collected[self.rank] = data
+        return collected
 
     def allgather(self, data):
-        return list(self.allRankData)
+        return self._collect(data)
 
     def gather(self, data, root=0):
+        collected = self._collect(data)
         if self.rank == root:
-            return list(self.allRankData)
+            return collected
         return None
 
 
@@ -431,8 +441,24 @@ class TestCheckInputsHaveSources(unittest.TestCase):
         presentNames = [name for rankNames in allRankOutputNames for name in rankNames]
         assume(missingName not in presentNames)
         inputNames = presentNames[:1] + [missingName]
-        with self.assertRaisesRegex(ValueError, re.escape(missingName)):
+        with self.assertRaises(ValueError) as context:
             checkInputsHaveSources(inputNames, allRankOutputNames[rank], FakeComm(rank, allRankOutputNames))
+        self.assertIn(repr(missingName), str(context.exception))
+
+    @given(allRankOutputs, data())
+    def test_sends_only_local_outputs_that_are_inputs(self, allRankOutputNames, drawData):
+        """
+        Given inputs that are all outputs on some rank,
+        when the inputs are checked,
+        then this rank sends only those of its outputs that are inputs, not all of them.
+        """
+        allNames = sorted({name for rankNames in allRankOutputNames for name in rankNames})
+        assume(len(allNames) > 0)
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        inputNames = drawData.draw(lists(sampled_from(allNames)))
+        comm = FakeComm(rank, allRankOutputNames)
+        checkInputsHaveSources(inputNames, allRankOutputNames[rank], comm)
+        self.assertEqual(set(comm.sentData), set(inputNames) & set(allRankOutputNames[rank]))
 
     @given(allRankOutputs)
     def test_empty_inputs_pass(self, allRankOutputNames):
