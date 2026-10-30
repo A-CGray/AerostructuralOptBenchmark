@@ -3,6 +3,7 @@
 # ==============================================================================
 import contextlib
 import io
+import re
 import unittest
 
 # ==============================================================================
@@ -10,8 +11,8 @@ import unittest
 # ==============================================================================
 import numpy as np
 import openmdao.api as om
-from hypothesis import given
-from hypothesis.strategies import integers, lists, text
+from hypothesis import assume, given
+from hypothesis.strategies import data, integers, lists, text
 
 # ==============================================================================
 # Extension modules
@@ -19,10 +20,12 @@ from hypothesis.strategies import integers, lists, text
 from utils import (
     BANNER_LINE,
     allowResponsesAfterSetup,
+    checkInputsHaveSources,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
     getDesignVarSources,
+    getPromotedInputNames,
     getRelevantInputs,
     getSource,
     printBanner,
@@ -31,6 +34,8 @@ from utils import (
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
+NAME_ALPHABET = "abc"
+MISSING_NAME_ALPHABET = NAME_ALPHABET + "d"
 
 
 class FakeComm:
@@ -316,6 +321,77 @@ class TestAllowResponsesAfterSetup(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             with allowResponsesAfterSetup(prob):
                 pass
+
+
+class TestGetPromotedInputNames(unittest.TestCase):
+    def test_returns_each_unconnected_input_once_in_sorted_order(self):
+        """
+        Given a model where two components share one promoted input and one has another input of its own,
+        when the promoted input names are listed,
+        then each input that takes its value from outside the model appears once, in sorted order.
+        """
+        prob = om.Problem()
+        prob.model.add_subsystem("comp1", om.ExecComp("b = 2 * x"), promotes=["*"])
+        prob.model.add_subsystem("comp2", om.ExecComp("c = x + w"), promotes=["*"])
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["w", "x"])
+
+    def test_excludes_inputs_fed_by_another_component(self):
+        """Assert that an input connected to another component's output is not listed as a model input."""
+        prob = om.Problem()
+        prob.model.add_subsystem("comp1", om.ExecComp("y = 2 * x"), promotes=["*"])
+        prob.model.add_subsystem("comp2", om.ExecComp("z = y + w"), promotes=["*"])
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["w", "x"])
+
+    def test_reports_an_unpromoted_unconnected_input_by_its_path(self):
+        """
+        Given a component whose input is neither promoted nor connected,
+        when the promoted input names are listed,
+        then the input is still reported, by its path, so a missing source for it can be caught.
+        """
+        prob = om.Problem()
+        prob.model.add_subsystem("comp", om.ExecComp("b = 2 * a"))
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["comp.a"])
+
+
+allRankOutputs = lists(lists(text(NAME_ALPHABET, min_size=1)), min_size=1)
+
+
+class TestCheckInputsHaveSources(unittest.TestCase):
+    @given(allRankOutputs, data())
+    def test_inputs_produced_on_any_rank_pass(self, allRankOutputNames, drawData):
+        """
+        Given output names spread over several ranks,
+        when every one of those names is checked as an input from any one rank,
+        then no error is raised, because each input is an output on some rank.
+        """
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        inputNames = [name for rankNames in allRankOutputNames for name in rankNames]
+        self.assertIsNone(
+            checkInputsHaveSources(inputNames, allRankOutputNames[rank], FakeComm(rank, allRankOutputNames))
+        )
+
+    @given(allRankOutputs, data())
+    def test_missing_input_raises_naming_it(self, allRankOutputNames, drawData):
+        """
+        Given an input name that is not an output on any rank,
+        when the inputs are checked,
+        then a ValueError naming the missing input is raised.
+        """
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        missingName = drawData.draw(text(MISSING_NAME_ALPHABET, min_size=1))
+        presentNames = [name for rankNames in allRankOutputNames for name in rankNames]
+        assume(missingName not in presentNames)
+        inputNames = presentNames[:1] + [missingName]
+        with self.assertRaisesRegex(ValueError, re.escape(missingName)):
+            checkInputsHaveSources(inputNames, allRankOutputNames[rank], FakeComm(rank, allRankOutputNames))
+
+    @given(allRankOutputs)
+    def test_empty_inputs_pass(self, allRankOutputNames):
+        """Assert that checking no inputs raises no error, whatever outputs the ranks have."""
+        self.assertIsNone(checkInputsHaveSources([], allRankOutputNames[0], FakeComm(0, allRankOutputNames)))
 
 
 if __name__ == "__main__":

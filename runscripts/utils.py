@@ -410,6 +410,55 @@ def getSource(system, name):
         )
 
 
+AUTO_IVC_PREFIX = "_auto_ivc."
+
+
+def getPromotedInputNames(prob: om.Problem) -> list[str]:
+    """Get the promoted names of the inputs that a problem's model needs from outside, i.e. that no output connects to
+
+    Parameters
+    ----------
+    prob : om.Problem
+        Problem that has been set up
+
+    Returns
+    -------
+    list[str]
+        Sorted promoted names of the inputs whose source is OpenMDAO's automatic IVC, each listed once
+    """
+    inputNames = set()
+    for _, meta in prob.model.list_inputs(prom_name=True, out_stream=None):
+        promName = meta["prom_name"]
+        if getSource(prob.model, promName).startswith(AUTO_IVC_PREFIX):
+            inputNames.add(promName)
+    return sorted(inputNames)
+
+
+def checkInputsHaveSources(inputNames: Iterable[str], localOutputNames: Iterable[str], comm) -> None:
+    """Check that every input name is the name of an output on some rank of a communicator
+
+    This is collective, so every rank of `comm` must call it.
+
+    Parameters
+    ----------
+    inputNames : Iterable[str]
+        Names of the inputs that need a source
+    localOutputNames : Iterable[str]
+        Names of the outputs on this rank
+    comm : MPI communicator
+        Communicator over whose ranks the outputs are gathered
+
+    Raises
+    ------
+    ValueError
+        If any input name is not an output name on any rank, listing the missing names
+    """
+    allOutputNames = set(gatherUnion(comm, localOutputNames))
+    missingNames = sorted(set(inputNames) - allOutputNames)
+    if len(missingNames) > 0:
+        raise ValueError(f"These inputs are not outputs of any flight point model: {missingNames}")
+
+
 def convertSensDict(openmdaoSensDict):
     """
     Convert the OpenMDAO sensitivity dictionary into the format expected by pyOptSparse
