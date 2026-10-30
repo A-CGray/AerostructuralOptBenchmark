@@ -146,8 +146,7 @@ class TestPrintBanner(unittest.TestCase):
         """
         Given one section with two items,
         when the banner is printed,
-        then the output matches the runscript's original banner: an empty line, a line of "=", the title, one
-        indented "- " line per item, a line of "=", and an empty line.
+        then the output matches the runscript's original banner format character for character.
         """
         expected = "\n" + BANNER_LINE + "\nGrad funcs:\n  - a\n  - b\n" + BANNER_LINE + "\n\n"
         self.assertEqual(capturePrintedBanner({"Grad funcs": ["a", "b"]}), expected)
@@ -170,7 +169,7 @@ class TestPrintBanner(unittest.TestCase):
         self.assertEqual(capturePrintedBanner({"Disp funcs": []}), expected)
 
     def test_banner_line_matches_existing_banners(self):
-        """Assert that the banner line is the 79-character line of "=" the runscript printed before."""
+        """Assert that the banner line is identical to the line the runscript's banners printed before."""
         self.assertEqual(BANNER_LINE, "===============================================================================")
 
 
