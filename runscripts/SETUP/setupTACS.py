@@ -13,13 +13,15 @@ Structural setup functions
 # ==============================================================================
 import os
 import sys
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 
 # ==============================================================================
 # External Python modules
 # ==============================================================================
+import dill  # A better version of pickle
 import numpy as np
 from tacs import elements, constitutive, functions, TACS
+from tacs.mphys import TacsBuilder
 
 # ==============================================================================
 # Extension modules
@@ -65,6 +67,26 @@ sparRibPlyAngles = np.deg2rad(np.array([0.0, -45.0, 45.0, 90.0]))
 sparRibPlyFracs = np.array([10.0, 35.0, 35.0, 20.0]) / 100.0
 
 kcorr = 5.0 / 6.0  # shear correction factor
+
+# --- Files read and written alongside the struct mesh and run outputs ---
+PANEL_LENGTHS_FILE_NAME = "PanelLengths.csv"
+STRUCT_DV_MAP_FILE_NAME = "structDVMap.pkl"
+
+# --- Nonlinear analysis options ---
+NONLINEAR_PROBLEM_OPTIONS = {"writeNLIterSolutions": False, "printLevel": 1}
+NEWTON_SOLVER_OPTIONS = {
+    "UseEW": True,
+    "MaxLinIters": 10,
+    "skipFirstNLineSearch": 1,
+    "ForceFirstIter": True,
+    "maxIter": 20,
+}
+CONTINUATION_SOLVER_OPTIONS = {
+    "RelTol": 1e-7,
+    "UsePredictor": True,
+    "NumPredictorStates": 4,
+    "maxIter": 20,
+}
 
 # --- Design variable values ---
 flangeFraction = 1.0
@@ -605,3 +627,149 @@ def buildStructDVDictMap(assembler, args):
                 dvMap[compName][dvName] = dvNums[dvNum] if dvNum >= 0 else -1
 
     return dvMap
+
+
+def readPanelLengths(structMeshFile: str) -> dict[str, float]:
+    """Read the panel length of each component, stored in a csv file in the same directory as the struct mesh
+
+    Parameters
+    ----------
+    structMeshFile : str
+        Path to the struct mesh file
+
+    Returns
+    -------
+    dict[str, float]
+        Panel length of each component, keyed by component description
+    """
+    panelLengthFileName = os.path.join(os.path.dirname(structMeshFile), PANEL_LENGTHS_FILE_NAME)
+    with open(panelLengthFileName, "r") as panelLengthFile:
+        panelLengths = {line.split(",")[0]: float(line.split(",")[1]) for line in panelLengthFile}
+    return panelLengths
+
+
+def getNonlinearSolverOptions(args) -> tuple[Optional[dict], Optional[dict]]:
+    """Return the Newton and continuation solver options, or (None, None) for a linear analysis.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Command line arguments, ``args.nonlinear`` selects a nonlinear analysis
+
+    Returns
+    -------
+    tuple[Optional[dict], Optional[dict]]
+        New copies of the Newton and continuation solver options
+    """
+    if not args.nonlinear:
+        return None, None
+    return dict(NEWTON_SOLVER_OPTIONS), dict(CONTINUATION_SOLVER_OPTIONS)
+
+
+def createTacsBuilder(
+    args,
+    structMeshFile: str,
+    flightPoints: list,
+    problemOptions: dict,
+    extraProblemSetup: Optional[Callable] = None,
+    **builderKwargs,
+) -> TacsBuilder:
+    """Create a TACS MPhys builder with the wingbox assembler, element, problem and constraint setup
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Command line arguments
+    structMeshFile : str
+        Path to the struct mesh file, the panel lengths are read from the same directory
+    flightPoints : list[FlightPoint]
+        Flight points the builder will set up problems for, the problem setup looks each one up by scenario name, and
+        TACS constraints are only created for the first one
+    problemOptions : dict
+        StaticProblem options, the nonlinear problem options are added to a copy of this dict for a nonlinear analysis
+    extraProblemSetup : Callable, optional
+        Function called as ``extraProblemSetup(scenarioName, feaAssembler, problem)`` after the standard problem setup,
+        by default None
+    **builderKwargs
+        Passed straight to ``TacsBuilder``
+
+    Returns
+    -------
+    TacsBuilder
+        The builder, not yet initialised
+    """
+    flightPointsDict = {fp.name: fp for fp in flightPoints}
+    panelLengths = readPanelLengths(structMeshFile)
+    newtonOptions, continuationOptions = getNonlinearSolverOptions(args)
+    if args.nonlinear:
+        problemOptions = {**problemOptions, **NONLINEAR_PROBLEM_OPTIONS}
+
+    def setup_assembler(assembler):
+        return setup_tacs_assembler(assembler, args)
+
+    def setup_tacs_problem(scenario_name, fea_assembler, problem):
+        flightPoint = flightPointsDict[scenario_name]
+        problem_setup(
+            scenario_name,
+            flightPoint,
+            fea_assembler,
+            problem,
+            args=args,
+            options=problemOptions,
+            newtonOptions=newtonOptions,
+            continuationOptions=continuationOptions,
+        )
+        if extraProblemSetup is not None:
+            extraProblemSetup(scenario_name, fea_assembler, problem)
+
+    def setup_elements(dvNum, compID, compDescript, elemDescripts, specialDVs, **kwargs):
+        return element_callback(
+            dvNum,
+            compID,
+            compDescript,
+            elemDescripts,
+            specialDVs,
+            args,
+            nonlinear=args.nonlinear,
+            useComposite=args.useComposite,
+            usePanelLengthDVs=args.usePanelLengthDVs,
+            usePlyFractionDVs=args.usePlyFractionDVs,
+            useStiffenerPitchDVs=args.useStiffPitchDVs,
+            panelLengths=panelLengths,
+            **kwargs,
+        )
+
+    def constraint_callback(scenario_name, fea_assembler, constraints):
+        if scenario_name == flightPoints[0].name:
+            return setupConstraints(scenario_name, fea_assembler, constraints, args)
+        return None
+
+    return TacsBuilder(
+        mesh_file=structMeshFile,
+        assembler_setup=setup_assembler,
+        element_callback=setup_elements,
+        constraint_setup=constraint_callback,
+        problem_setup=setup_tacs_problem,
+        **builderKwargs,
+    )
+
+
+def writeStructDVMap(feaAssembler, args, outputDir: str, comm) -> None:
+    """Write the design variable numbers of each component to a pickle file in the output directory
+
+    Parameters
+    ----------
+    feaAssembler : pyTACS assembler
+        pyTACS assembler object for the problem
+    args : argparse.Namespace
+        Command line arguments
+    outputDir : str
+        Directory to write the file to
+    comm : MPI communicator
+        Only rank 0 of this communicator writes the file, pass the global communicator when several groups of procs
+        share the output directory
+    """
+    structDVMap = buildStructDVDictMap(feaAssembler, args)
+    if comm.rank == 0:
+        with open(os.path.join(outputDir, STRUCT_DV_MAP_FILE_NAME), "wb") as structDVMapFile:
+            dill.dump(structDVMap, structDVMapFile)
