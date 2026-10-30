@@ -18,6 +18,7 @@ import collections
 import os
 import re
 import sys
+from typing import Optional
 
 # ==============================================================================
 # External Python modules
@@ -323,7 +324,9 @@ def _compareStdoutFiles(
     return messages
 
 
-def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompareStdoutLines: bool) -> list[str]:
+def compareRunDirs(
+    refDir: str, newDir: str, rtol: float, atol: float, doCompareStdoutLines: bool, sensAtol: Optional[float] = None
+) -> list[str]:
     """Compare every stdout, Outputs.pkl and history file in a reference run directory with the same file in a new one
 
     Files found in only one of the directories are reported, as is a reference directory with no files to compare.
@@ -340,12 +343,18 @@ def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompare
         Absolute tolerance for numeric values
     doCompareStdoutLines : bool
         Whether to compare all normalised stdout lines as well as the printed lists
+    sensAtol : float, optional
+        Absolute tolerance for the history files' function sensitivities, by default ``atol``.
+        Derivatives whose true value is zero come out as solver noise, which needs a larger absolute tolerance than
+        the other values.
 
     Returns
     -------
     list[str]
         One message per difference, each prefixed with the relative path of the file, empty if there are none
     """
+    if sensAtol is None:
+        sensAtol = atol
     refDir = os.path.abspath(refDir)
     newDir = os.path.abspath(newDir)
     messages = []
@@ -382,7 +391,7 @@ def compareRunDirs(refDir: str, newDir: str, rtol: float, atol: float, doCompare
             refFuncs, refFuncsSens = readFirstHistoryEntries(refFile)
             newFuncs, newFuncsSens = readFirstHistoryEntries(newFile)
             messages += compareValues(refFuncs, newFuncs, rtol, atol, f"{relPath}.funcs")
-            messages += compareValues(refFuncsSens, newFuncsSens, rtol, atol, f"{relPath}.funcsSens")
+            messages += compareValues(refFuncsSens, newFuncsSens, rtol, sensAtol, f"{relPath}.funcsSens")
             refProblem = readHistoryProblemDefinition(refFile)
             newProblem = readHistoryProblemDefinition(newFile)
             messages += compareValues(refProblem, newProblem, rtol, atol, relPath)
@@ -396,13 +405,19 @@ def main() -> int:
     parser.add_argument("--rtol", type=float, default=DEFAULT_RTOL, help="Relative tolerance for numeric values")
     parser.add_argument("--atol", type=float, default=DEFAULT_ATOL, help="Absolute tolerance for numeric values")
     parser.add_argument(
+        "--sensAtol",
+        type=float,
+        default=None,
+        help="Absolute tolerance for history file function sensitivities, by default the same as --atol",
+    )
+    parser.add_argument(
         "--compareStdoutLines",
         action="store_true",
         help="Compare all normalised stdout lines, not just the printed lists",
     )
     args = parser.parse_args()
 
-    messages = compareRunDirs(args.refDir, args.newDir, args.rtol, args.atol, args.compareStdoutLines)
+    messages = compareRunDirs(args.refDir, args.newDir, args.rtol, args.atol, args.compareStdoutLines, args.sensAtol)
     for message in messages:
         print(message)
     if len(messages) == 0:

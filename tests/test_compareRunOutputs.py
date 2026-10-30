@@ -8,10 +8,12 @@ import unittest
 # ==============================================================================
 # External Python modules
 # ==============================================================================
+import dill
 import numpy as np
 from hypothesis import given
 from hypothesis.extra.numpy import array_shapes, arrays
 from hypothesis.strategies import floats
+from pyoptsparse import OPT, Optimization
 
 # ==============================================================================
 # Extension modules
@@ -26,6 +28,33 @@ from compareRunOutputs import (
 )
 
 RUN_DIR = "/some/output/dir/refactor/baseline/check"
+HISTORY_FILE_NAME = "AeroStructOpt.hst"
+TOY_START_VALUE = 3.0
+TOY_BOUND = 10.0
+SMALL_DIFFERENCE = 1e-6
+SENS_ATOL = 1e-5
+
+
+def writeToyHistory(historyFile: str, funcOffset: float = 0.0, sensOffset: float = 0.0) -> None:
+    """Write a pyOptSparse history file from one SLSQP iteration on f = x^2, offsetting the function and derivative."""
+
+    def computeFuncs(x):
+        return {"f": x["x"][0] ** 2 + funcOffset}, False
+
+    def computeSens(x, funcs):
+        return {"f": {"x": [2 * x["x"][0] + sensOffset]}}, False
+
+    optProb = Optimization("toy", computeFuncs)
+    optProb.addVarGroup("x", 1, lower=-TOY_BOUND, upper=TOY_BOUND, value=TOY_START_VALUE)
+    optProb.addObj("f")
+    optimiser = OPT("SLSQP", options={"MAXIT": 1, "IPRINT": -1})
+    optimiser(optProb, sens=computeSens, storeHistory=historyFile)
+
+
+def writeOutputsPickle(runDir: str, outputs: dict) -> None:
+    """Write an Outputs.pkl file into a run directory."""
+    with open(os.path.join(runDir, "Outputs.pkl"), "wb") as file:
+        dill.dump(outputs, file)
 
 
 class TestParseListBlocks(unittest.TestCase):
@@ -243,6 +272,55 @@ class TestCompareRunDirs(unittest.TestCase):
             messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, True)
             self.assertEqual(len(messages), 1)
             self.assertIn(os.path.join("fp2", "stdout.out"), messages[0])
+
+
+class TestCompareRunDirsSensAtol(unittest.TestCase):
+    def test_sens_difference_within_sens_atol_ignored(self):
+        """
+        Given history files whose first derivatives differ by more than atol but less than sensAtol,
+        when the run directories are compared with that sensAtol,
+        then no difference is reported.
+        """
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            writeToyHistory(os.path.join(refDir, HISTORY_FILE_NAME))
+            writeToyHistory(os.path.join(newDir, HISTORY_FILE_NAME), sensOffset=SMALL_DIFFERENCE)
+            messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, False, sensAtol=SENS_ATOL)
+            self.assertEqual(messages, [])
+
+    def test_sens_difference_reported_without_sens_atol(self):
+        """Assert that derivatives are compared with atol when no sensAtol is given."""
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            writeToyHistory(os.path.join(refDir, HISTORY_FILE_NAME))
+            writeToyHistory(os.path.join(newDir, HISTORY_FILE_NAME), sensOffset=SMALL_DIFFERENCE)
+            messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, False)
+            self.assertEqual(len(messages), 1)
+            self.assertIn("funcsSens", messages[0])
+
+    def test_sens_atol_does_not_loosen_function_values(self):
+        """
+        Given history files whose first function values differ by more than atol but less than sensAtol,
+        when the run directories are compared with that sensAtol,
+        then the function value difference is still reported.
+        """
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            writeToyHistory(os.path.join(refDir, HISTORY_FILE_NAME))
+            writeToyHistory(os.path.join(newDir, HISTORY_FILE_NAME), funcOffset=SMALL_DIFFERENCE)
+            messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, False, sensAtol=SENS_ATOL)
+            self.assertEqual(len(messages), 1)
+            self.assertIn(".funcs.f", messages[0])
+
+    def test_sens_atol_does_not_loosen_outputs(self):
+        """
+        Given Outputs.pkl files whose values differ by more than atol but less than sensAtol,
+        when the run directories are compared with that sensAtol,
+        then the output difference is still reported.
+        """
+        with tempfile.TemporaryDirectory() as refDir, tempfile.TemporaryDirectory() as newDir:
+            writeOutputsPickle(refDir, {"thickness": np.array([TOY_START_VALUE])})
+            writeOutputsPickle(newDir, {"thickness": np.array([TOY_START_VALUE + SMALL_DIFFERENCE])})
+            messages = compareRunDirs(refDir, newDir, DEFAULT_RTOL, DEFAULT_ATOL, False, sensAtol=SENS_ATOL)
+            self.assertEqual(len(messages), 1)
+            self.assertIn("thickness", messages[0])
 
 
 if __name__ == "__main__":
