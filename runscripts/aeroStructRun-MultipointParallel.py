@@ -30,6 +30,8 @@ import sys
 from pprint import pprint as pp
 import time
 import copy
+import argparse
+from dataclasses import dataclass
 
 # ==============================================================================
 # External Python modules
@@ -254,42 +256,122 @@ parser.add_argument(
     help="Which structural nodes to include in the LDTransfer",
 )
 
-args = parser.parse_args()
+
+# ==============================================================================
+# Run configuration
+# ==============================================================================
+# Generally, massively scaling down the lift difference helps the optimiser make better progress, but in the trim
+# task, where all we care about is hitting the lift constraints, we won't scale them down quite as much so that we
+# really nail the right lift value.
+LIFT_CON_SCALE = 1e-8
+TRIM_LIFT_CON_SCALE = 1e-6
+
+
+@dataclass(frozen=True)
+class TaskSettings:
+    """The command line arguments after the task overrides, and the settings that depend on the task."""
+
+    # The command line arguments with the task's overrides applied
+    args: argparse.Namespace
+    # Whether this is a structural mass minimisation (`--optType structMass`)
+    isStructOnlyOpt: bool
+    # Whether to use the first flight point's structural mass as a dummy objective
+    doUseStructMassObjective: bool
+    # Whether to add the failure, fuel tank, planform, buffet and balanced field length constraints
+    doAddDesignConstraints: bool
+    # Whether to add the geometric constraints (on the first flight point only)
+    doAddGeoConstraints: bool
+    # Whether to add the TACS constraints (on the first flight point only)
+    doAddTacsConstraints: bool
+    # Whether to add the fuel tank volume constraint to the performance model
+    doIncludeFuelVolumeConstraint: bool
+    # Scaling factor for the lift constraints
+    liftConScale: float
+    # Whether the flight point functions evaluated are only the ones we need gradients of, rather than all disp funcs
+    doEvaluateGradFuncsOnly: bool
+    # Whether to run the model once before the task itself
+    doInitialRun: bool
+    # Whether to write solution files from the initial runs
+    doWriteInitialSolution: bool
+    # Whether to write solution files every time the objective function is evaluated
+    doWriteSolutionInObj: bool
+    # Whether to write solution files every time the sensitivity function is evaluated
+    doWriteSolutionInSens: bool
+
+
+def resolveTaskSettings(args: argparse.Namespace) -> TaskSettings:
+    """Apply the task's overrides to a copy of the command line arguments and work out the task-dependent settings.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The command line arguments, which are not changed
+
+    Returns
+    -------
+    TaskSettings
+        The overridden arguments and the settings that depend on the task
+    """
+    taskArgs = copy.copy(args)
+
+    # If we're doing a derivative check, we should at least enable some geometric and structural DVs
+    if args.task == "derivCheck":
+        taskArgs.addGeoDVs = True
+        taskArgs.sweep = True
+        taskArgs.addStructDVs = True
+        # taskArgs.includeBFL = True
+        taskArgs.useFuelMassDVs = True
+
+    # If we are doing a trim task then we should disable the structural and geometric design variables
+    if args.task == "trim":
+        taskArgs.addStructDVs = False
+        taskArgs.addGeoDVs = False
+        taskArgs.addPlanformCons = False
+
+    # If we're running the setup check, enable everything
+    if args.task == "check":
+        taskArgs.addGeoDVs = True
+        taskArgs.addStructDVs = True
+        taskArgs.usePanelLengthDVs = True
+        taskArgs.useFuelMassDVs = True
+        taskArgs.addPlanformCons = True
+        taskArgs.twist = True
+        taskArgs.sweep = True
+        taskArgs.shape = True
+        taskArgs.span = True
+        taskArgs.xShift = True
+        taskArgs.dihedral = True
+        taskArgs.taper = True
+
+    task = taskArgs.task
+    isStructOnlyOpt = task == "opt" and taskArgs.optType == "structMass"
+    return TaskSettings(
+        args=taskArgs,
+        isStructOnlyOpt=isStructOnlyOpt,
+        doUseStructMassObjective=isStructOnlyOpt or task == "trim",
+        doAddDesignConstraints=task != "trim",
+        doAddGeoConstraints=task in ["opt", "check", "derivCheck"],
+        doAddTacsConstraints=taskArgs.addStructDVs and task == "opt",
+        doIncludeFuelVolumeConstraint=(
+            taskArgs.useFuelMassDVs and task in ["opt", "check"] and (taskArgs.span or taskArgs.taper or taskArgs.shape)
+        ),
+        liftConScale=TRIM_LIFT_CON_SCALE if task == "trim" else LIFT_CON_SCALE,
+        doEvaluateGradFuncsOnly=task == "derivCheck",
+        doInitialRun=task != "check",
+        doWriteInitialSolution=task == "analysis",
+        doWriteSolutionInObj=task != "opt",
+        doWriteSolutionInSens=task == "opt",
+    )
+
+
+taskSettings = resolveTaskSettings(parser.parse_args())
+args = taskSettings.args
 
 if args.profile:
     import cProfile
 
     pr = cProfile.Profile()
     pr.enable()
-
-# If we're doing a derivative check, we should at least enable some geometric and structural DVs
-if args.task == "derivCheck":
-    args.addGeoDVs = True
-    args.sweep = True
-    args.addStructDVs = True
-    # args.includeBFL = True
-    args.useFuelMassDVs = True
-
-# If we are doing a trim task then we should disable the structural and geometric design variables
-if args.task == "trim":
-    args.addStructDVs = False
-    args.addGeoDVs = False
-    args.addPlanformCons = False
-
-# If we're running the setup check, enable everything
-if args.task == "check":
-    args.addGeoDVs = True
-    args.addStructDVs = True
-    args.usePanelLengthDVs = True
-    args.useFuelMassDVs = True
-    args.addPlanformCons = True
-    args.twist = True
-    args.sweep = True
-    args.shape = True
-    args.span = True
-    args.xShift = True
-    args.dihedral = True
-    args.taper = True
 
 
 # Define flight points to use
@@ -395,7 +477,6 @@ aeroMeshFile = getAeroMeshPath(level=args.aeroLevel, useVLM=usingVLM)
 
 ffdFile = getFFDPath(level=args.ffdLevel)
 
-structOnlyOpt = args.task == "opt" and args.optType == "structMass"
 
 structMeshSpacing = {
     1: 0.035,
@@ -948,7 +1029,7 @@ class AnalysisPoint(Multipoint):
             dvScaleFactor=args.geoScalingFactor,
             geoCompName="geometry",
             addGeoDVs=args.addGeoDVs,
-            addGeoConstraints=ptID == 0 and args.task in ["opt", "check", "derivCheck"],
+            addGeoConstraints=ptID == 0 and taskSettings.doAddGeoConstraints,
             computeRibBayVolumes=True,
             computeToC=isCruisePoint,
         )
@@ -975,7 +1056,7 @@ class AnalysisPoint(Multipoint):
             self.connect(f"geometry.{wimpressCoordName}", "PlanformValues.x_wimpress")
 
         # Only add TACS constraints on the first proc set and if we're actually doing an optimisation
-        if ptID == 0 and args.addStructDVs and args.task == "opt":
+        if ptID == 0 and taskSettings.doAddTacsConstraints:
             firstScenario = getattr(self, self.fpName)
             add_tacs_constraints(firstScenario)
 
@@ -1045,20 +1126,17 @@ flightPointProb.model = AnalysisPoint()
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=globalComm, work_dir=outputDir)
 includeFuelMassConstraints = args.useFuelMassDVs
-includeFuelVolumeConstraint = (
-    includeFuelMassConstraints and args.task in ["opt", "check"] and (args.span or args.taper or args.shape)
-)
 performanceProb.model = performanceCalc.FuelAndMassConstraintGroup(
     aircraftSpecs=aircraftSpecs,
     flightPointSet=flightPoints,
     includeFuelMassConstraints=includeFuelMassConstraints,
-    includeFuelVolumeConstraint=includeFuelVolumeConstraint,
+    includeFuelVolumeConstraint=taskSettings.doIncludeFuelVolumeConstraint,
 )
 
 # ==============================================================================
 # Setup objective
 # ==============================================================================
-if structOnlyOpt or args.task == "trim":
+if taskSettings.doUseStructMassObjective:
     if ptID == 0:
         # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
         # just satisfies the trim constraints
@@ -1080,16 +1158,12 @@ else:
 # We have a lift=mass*g*loadFactor constraint for each aerostructural flight point. These should be enforced in both
 # the trim and opt tasks.
 
-# Generally, massively scaling down the lift difference helps the optimiser make better progress, but in the trim
-# task, where all we care about is hitting the lift constraints, we won't scale them down quite as much so that we
-# really nail the right lift value.
-liftConScale = 1e-6 if args.task == "trim" else 1e-8
 for fp in flightPoints:
     if isinstance(fp, FlightPoint):
         performanceProb.model.add_constraint(
             f"{fp.name}LiftDiff",
             equals=0.0,
-            scaler=liftConScale,
+            scaler=taskSettings.liftConScale,
             cache_linear_solution=True,
         )
 
@@ -1107,7 +1181,7 @@ if includeFuelMassConstraints:
             cache_linear_solution=True,
         )
 
-if args.task != "trim":
+if taskSettings.doAddDesignConstraints:
     # --- TACS Failure constraints ---
     # These should be included in all opt tasks
     if localFlightPoint.failureGroups is not None:
@@ -1115,11 +1189,11 @@ if args.task != "trim":
             failureConName = f"{localFlightPoint.name}.{group}_ksFailure"
             flightPointProb.model.add_constraint(failureConName, upper=1.0, scaler=1.0, cache_linear_solution=True)
 
-    if not structOnlyOpt and args.addGeoDVs:
+    if not taskSettings.isStructOnlyOpt and args.addGeoDVs:
         # --- Fuel tank capacity constraint ---
         # We only apply this if we have a cruise point to compute the fuel burn and if we have geometric DVs that
         # will affect the fuel tank volume
-        if includeFuelVolumeConstraint:
+        if taskSettings.doIncludeFuelVolumeConstraint:
             performanceProb.model.add_constraint("fuelTankUsage", upper=1.0, cache_linear_solution=True)
         # --- Planform constraints ---
         if isCruisePoint:
@@ -1514,7 +1588,9 @@ MP.setObjCon(objCon)
 # ==============================================================================
 def procSetObj(x=None):
     return runAeroStructAnalyses(
-        x, evalFuncs=gradFuncs if args.task == "derivCheck" else dispFuncs, writeSolution=args.task != "opt"
+        x,
+        evalFuncs=gradFuncs if taskSettings.doEvaluateGradFuncsOnly else dispFuncs,
+        writeSolution=taskSettings.doWriteSolutionInObj,
     )
 
 
@@ -1528,8 +1604,8 @@ def procSetSens(x=None, funcs=None):
         x,
         funcs,
         gradFuncs=gradFuncs,
-        dispFuncs=gradFuncs if args.task == "derivCheck" else dispFuncs,
-        writeSolution=args.task == "opt",
+        dispFuncs=gradFuncs if taskSettings.doEvaluateGradFuncsOnly else dispFuncs,
+        writeSolution=taskSettings.doWriteSolutionInSens,
     )
 
 
@@ -1569,11 +1645,11 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
     return funcs
 
 
-if args.task != "check":
+if taskSettings.doInitialRun:
     # ==============================================================================
     # Run the model to initialize everything
     # ==============================================================================
-    funcs = runAnalysesRobustly(args.initDVs, evalFuncs=dispFuncs, writeSolution=args.task == "analysis")
+    funcs = runAnalysesRobustly(args.initDVs, evalFuncs=dispFuncs, writeSolution=taskSettings.doWriteInitialSolution)
     # Before proceeding, combine the function values from all flight points and send them to every proc
     funcs = gatherMergedDict(globalComm, funcs)
     funcs = objCon(funcs, True, None)
@@ -1584,11 +1660,11 @@ if args.task != "check":
 if len(args.postInitDVs) != 0:
     print(f"Proc {globalRank}: Running again with postInitDVs", flush=True)
     setValsFromFiles(args.postInitDVs, flightPointProb)
-    if args.task != "check":
+    if taskSettings.doInitialRun:
         funcs = runAnalysesRobustly(
             args.postInitDVs,
             evalFuncs=dispFuncs,
-            writeSolution=args.task == "analysis",
+            writeSolution=taskSettings.doWriteInitialSolution,
         )
         funcs = gatherMergedDict(globalComm, funcs)
         funcs = objCon(funcs, True, None)
