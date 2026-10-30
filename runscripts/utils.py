@@ -33,6 +33,9 @@ from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 from geometry.wingGeometry import wingGeometry  # noqa: E402
 from performanceCalc import FuelDistributionGroup  # noqa: E402
 
+# Re-exported for the runscripts, which import it from here
+from performanceCalc import getAeroForceName  # noqa: E402, F401
+
 
 # Line printed above and below the banners made by printBanner
 BANNER_LINE = "=" * 79
@@ -55,10 +58,6 @@ def getAeroMeshPath(level: int, useVLM: Optional[bool] = False) -> str:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing-VLMSurf-L{level}.npy")
     else:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing_vol_L{level}.cgns")
-
-
-def getAeroForceName(fpName: str, forceName: str) -> str:
-    return f"{fpName}_{forceName.capitalize()}"
 
 
 def getStructMeshPath(level: int, order: int) -> str:
@@ -424,10 +423,12 @@ def getPromotedInputNames(prob: om.Problem) -> list[str]:
     Returns
     -------
     list[str]
-        Sorted promoted names of the inputs whose source is OpenMDAO's automatic IVC, each listed once
+        Sorted promoted names of the inputs whose source is OpenMDAO's automatic IVC, each listed once, the same on
+        every rank
     """
     inputNames = set()
-    for _, meta in prob.model.list_inputs(prom_name=True, out_stream=None):
+    # Without all_procs (or val), list_inputs only returns the inputs on the root rank
+    for _, meta in prob.model.list_inputs(val=False, prom_name=True, all_procs=True, out_stream=None):
         promName = meta["prom_name"]
         if getSource(prob.model, promName).startswith(AUTO_IVC_PREFIX):
             inputNames.add(promName)

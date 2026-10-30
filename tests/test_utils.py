@@ -3,7 +3,12 @@
 # ==============================================================================
 import contextlib
 import io
+import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 import unittest
 
 # ==============================================================================
@@ -36,6 +41,28 @@ MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
 NAME_ALPHABET = "abc"
 MISSING_NAME_ALPHABET = NAME_ALPHABET + "d"
+RUNSCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runscripts")
+NUM_MPI_TEST_PROCS = 3
+MPI_TEST_TIMEOUT = 120  # seconds
+
+# Run by test_same_names_on_every_rank_under_mpi: prints each rank's promoted input names, for a model whose parallel
+# group puts some inputs on only some ranks
+PROMOTED_INPUT_NAMES_MPI_SCRIPT = """
+import json
+import openmdao.api as om
+from mpi4py import MPI
+from utils import getPromotedInputNames
+
+prob = om.Problem()
+prob.model.add_subsystem("comp1", om.ExecComp("b = 2 * x"), promotes=["*"])
+par = prob.model.add_subsystem("par", om.ParallelGroup(), promotes=["*"])
+par.add_subsystem("comp2", om.ExecComp("c = 3 * y"), promotes=["*"])
+par.add_subsystem("comp3", om.ExecComp("d = 3 * z"), promotes=["*"])
+prob.setup()
+allNames = MPI.COMM_WORLD.gather(getPromotedInputNames(prob), root=0)
+if MPI.COMM_WORLD.rank == 0:
+    print(json.dumps(allNames))
+"""
 
 
 class FakeComm:
@@ -354,6 +381,25 @@ class TestGetPromotedInputNames(unittest.TestCase):
         prob.model.add_subsystem("comp", om.ExecComp("b = 2 * a"))
         prob.setup()
         self.assertEqual(getPromotedInputNames(prob), ["comp.a"])
+
+    @unittest.skipIf(shutil.which("mpiexec") is None, "mpiexec is not available")
+    def test_same_names_on_every_rank_under_mpi(self):
+        """
+        Given a model run on several MPI ranks, with a parallel group that puts some inputs on only some ranks,
+        when every rank lists the promoted input names,
+        then every rank gets the full list, in the same order.
+        """
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([RUNSCRIPTS_DIR, os.environ.get("PYTHONPATH", "")]))
+        result = subprocess.run(
+            ["mpiexec", "-n", str(NUM_MPI_TEST_PROCS), sys.executable, "-c", PROMOTED_INPUT_NAMES_MPI_SCRIPT],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=MPI_TEST_TIMEOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        allRankNames = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(allRankNames, [["x", "y", "z"]] * NUM_MPI_TEST_PROCS)
 
 
 allRankOutputs = lists(lists(text(NAME_ALPHABET, min_size=1)), min_size=1)

@@ -86,6 +86,8 @@ from utils import (
     getDesignVarSources,
     allowResponsesAfterSetup,
     getAeroForceName,
+    getPromotedInputNames,
+    checkInputsHaveSources,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
@@ -1256,45 +1258,11 @@ flightPointProbOutputs = {}
 for output in tmp:
     flightPointProbOutputs[output[1]["prom_name"]] = output[1]
 
-# Setup the performance model and get the names of its inputs
+# Setup the performance model and get the names of its inputs. Each performance model input takes its value from the
+# flight point output with the same name, so check that some flight point model has an output with each name.
 performanceProb.setup(force_alloc_complex=True)
-performanceProbInputs = []
-for _, inp in performanceProb.model.list_inputs(out_stream=None):
-    promName = inp["prom_name"]
-    if promName not in performanceProbInputs and "." not in promName:
-        performanceProbInputs.append(promName)
-performanceProbInputs = globalComm.bcast(list(set(performanceProbInputs)), root=0)
-
-# Define the map from the outputs of the flight point models to the inputs required for the performance calculation
-# model
-perf2FlightPointMap = {}
-for inpName in performanceProbInputs:
-    # These have the same name in both models
-    if (
-        inpName
-        in [
-            "wingboxVolume",
-            "takeoffMass",
-            "midCruiseMass",
-            "cruiseStartMass",
-            "landingGrossMass",
-        ]
-        or "fuelMass" in inpName
-    ):
-        perf2FlightPointMap[inpName] = inpName
-    elif inpName == "fuelBurn":
-        perf2FlightPointMap[inpName] = "totalFuelBurn"
-    elif "Drag" in inpName or "Lift" in inpName:
-        fpName = inpName[:-4]
-        forceName = inpName[-4:]
-        perf2FlightPointMap[inpName] = getAeroForceName(fpName, forceName)
-
-# The map only get's defined on the root proc, so let's broadcast it to the rest (not sure if this is necessary)
-perf2FlightPointMap = globalComm.bcast(perf2FlightPointMap, root=0)
-flightPoint2PerfMap = {v: k for k, v in perf2FlightPointMap.items()}
-
-if ptRank == 0:
-    pp(perf2FlightPointMap)
+performanceInputs = getPromotedInputNames(performanceProb)
+checkInputsHaveSources(performanceInputs, flightPointProbOutputs.keys(), globalComm)
 
 # The coupled adjoint solver's rhs_checking ("auto") only creates its solution cache if, at final_setup, some declared
 # responses depend on others. The flight point outputs that feed the performance model (masses, fuel burn, lift) are
@@ -1309,7 +1277,7 @@ existingResponses = (
     + list(flightPointProb.model._static_design_vars.keys())
 )
 with allowResponsesAfterSetup(flightPointProb):
-    for outputName in perf2FlightPointMap.values():
+    for outputName in performanceInputs:
         if outputName in flightPointProbOutputs and outputName not in existingResponses:
             flightPointProb.model.add_constraint(outputName, alias=f"{PERFORMANCE_OUTPUT_ALIAS_PREFIX}{outputName}")
 
@@ -1368,7 +1336,7 @@ for obj in flightPointProb.model.get_objectives().values():
 # the gradients of because they're inputs to the performance model that computes further objectives/constraints.
 relevantFlightPointOutputs = {}
 dvsForObjCon = []
-performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceProbInputs]
+performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceInputs]
 # Objectives are included too, so that any flight point outputs a performance model objective depends on get gradients
 performanceResponses = list(performanceProb.model.get_constraints().values()) + list(
     performanceProb.model.get_objectives().values()
@@ -1380,13 +1348,10 @@ for con in performanceResponses:
     promConName = getPromName(performanceProb.model, fullConName)
     relevantInputs = getRelevantInputs(performanceProb.model, fullConName, performanceInputSources)
     relevantInputs = [getPromName(performanceProb.model, inp) for inp in relevantInputs]
-    # Step 2:
-    outputs = []
-    for inpName in relevantInputs:
-        if inpName in perf2FlightPointMap:
-            outputs.append(perf2FlightPointMap[inpName])
-    # outputs is now a list of all the variables from all the flight point problems whose derivatives are needed to
-    # compute this constraint in the performance model.
+    # Step 2: each performance model input has the same name as the flight point output that feeds it, so outputs is
+    # a list of all the variables from all the flight point problems whose derivatives are needed to compute this
+    # constraint in the performance model.
+    outputs = relevantInputs
 
     # Next save these outputs for later when we need to figure out which design variables these constraints depend on
     relevantFlightPointOutputs[con["name"]] = list(set(outputs))
@@ -1413,7 +1378,7 @@ if ptRank == 0:
 # --- Disp funcs ---
 # First add all the grad funcs, and all the functions we need to pass to the performance model
 dispFuncs = gradFuncs.copy()
-dispFuncs += [f for f in perf2FlightPointMap.values() if f in flightPointProbOutputs]
+dispFuncs += [f for f in performanceInputs if f in flightPointProbOutputs]
 
 # Now add any additional functions we want to track in the history file even though they're not required for
 # optimisation
@@ -1590,9 +1555,9 @@ def objCon(funcs, printOK, passThroughFuncs):
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
 
-    # Map from flight point outputs to performance model inputs
-    for performanceVarName, funcName in perf2FlightPointMap.items():
-        performanceProb.set_val(performanceVarName, funcs[funcName])
+    # Each performance model input takes the value of the flight point output with the same name
+    for inputName in performanceInputs:
+        performanceProb.set_val(inputName, funcs[inputName])
 
     performanceProb.run_model()
 
@@ -1761,7 +1726,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # are not in the performance model. We therefore need to do the following for each constraint in the performance
     # model:
     # 1) Figure out which inputs to the performance model it depends on
-    # 2) Map those inputs back to outputs of the flight point models using perf2FlightPointMap
+    # 2) Find the flight point outputs that feed those inputs, which have the same names
     # 3) Figure out which design variables those flight point outputs depend on using the flight point OpenMDAO model
     # This is complicated by the fact that some constraints in the performance model might depend on outputs from
     # multiple flight points
@@ -1777,7 +1742,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
         relevantDVs = []
         for output in relevantFlightPointOutputs[con["name"]]:
             if ptRank == 0:
-                print(f"- {flightPoint2PerfMap[output]}", flush=True)
+                print(f"- {output}", flush=True)
             if output in flightPointProbOutputs:
                 if output in flightPointProb.model.get_design_vars():
                     # If the output is itself a design variable then we can just add it straight away
@@ -1822,7 +1787,7 @@ if args.task in ["check", "opt", "trim", "derivCheck"]:
     # If any of the objective or constraint functions are also required as inputs for the performance model, we need to
     # explicitly tell this to multipoint so that it passes them to the objCon function
     for func in list(optProb.constraints.keys()) + list(optProb.objectives.keys()):
-        if func in perf2FlightPointMap.values():
+        if func in performanceInputs:
             if ptRank == 0:
                 print(f"Adding {func} as an objCon input function", flush=True)
             MP.addConsAsObjConInputs(func)
