@@ -991,7 +991,7 @@ class AnalysisPoint(Multipoint):
             # Add this point's angle of angle of attack as a DV
             alphaDVName = f"{fp.name}_AOA"
             dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
-            self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=1.0)
+            self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=0.1)
             if usingVLM:
                 # OpenAerostruct gets flight conditions from inputs instead of the aero problem
                 self.connect(alphaDVName, f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}")
