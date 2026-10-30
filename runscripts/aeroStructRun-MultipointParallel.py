@@ -1369,7 +1369,11 @@ for obj in flightPointProb.model.get_objectives().values():
 relevantFlightPointOutputs = {}
 dvsForObjCon = []
 performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceProbInputs]
-for con in performanceProb.model.get_constraints().values():
+# Objectives are included too, so that any flight point outputs a performance model objective depends on get gradients
+performanceResponses = list(performanceProb.model.get_constraints().values()) + list(
+    performanceProb.model.get_objectives().values()
+)
+for con in performanceResponses:
     # Step 1: find which performance model inputs this constraint depends on, getRelevantInputs takes the candidate
     # inputs explicitly so they don't need to be declared as design variables
     fullConName = con["source"]
