@@ -287,7 +287,8 @@ class TaskSettings:
     liftConScale: float
     # Whether the flight point functions evaluated are only the ones we need gradients of, rather than all disp funcs
     doEvaluateGradFuncsOnly: bool
-    # Whether to run the model once before the task itself
+    # Whether to run the model before the task itself, and again after setting any `--postInitDVs` (which are set
+    # either way)
     doInitialRun: bool
     # Whether to write solution files from the initial runs
     doWriteInitialSolution: bool
