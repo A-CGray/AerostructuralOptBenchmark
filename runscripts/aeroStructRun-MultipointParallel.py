@@ -2682,42 +2682,49 @@ def writeFinalOutputs(ctx: RunContext, flightPointProb: om.Problem, performanceP
         print(sol)
 
 
-ctx = buildRunContext(parser.parse_args(), MPI.COMM_WORLD)
+def main() -> None:
+    """Parse the command line arguments, build the problems and run the task"""
+    ctx = buildRunContext(parser.parse_args(), MPI.COMM_WORLD)
 
-if ctx.args.profile:
-    import cProfile
+    if ctx.args.profile:
+        import cProfile
 
-    pr = cProfile.Profile()
-    pr.enable()
+        pr = cProfile.Profile()
+        pr.enable()
 
-prepareOutputs(ctx)
-flightPointProb, performanceProb = buildProblems(ctx)
-coupling = setupPerformanceCoupling(ctx, flightPointProb, performanceProb)
+    prepareOutputs(ctx)
+    flightPointProb, performanceProb = buildProblems(ctx)
+    coupling = setupPerformanceCoupling(ctx, flightPointProb, performanceProb)  # gradFuncs, dispFuncs, MP callbacks
 
-if not ctx.settings.isDryRun:
-    runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.initDVs)
+    if not ctx.settings.isDryRun:  # every task except check
+        runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.initDVs)
 
-# DVs that shouldn't be used to initialise the model are set after the initial run, and the model is run again with them
-if len(ctx.args.postInitDVs) != 0:
-    setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
-    if not ctx.settings.isDryRun:
-        print(f"Proc {ctx.globalRank}: Running again with postInitDVs", flush=True)
-        runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.postInitDVs)
+    # DVs that shouldn't be used to initialise the model are set after the initial run, and the model is run again
+    # with them
+    if len(ctx.args.postInitDVs) != 0:
+        setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
+        if not ctx.settings.isDryRun:
+            print(f"Proc {ctx.globalRank}: Running again with postInitDVs", flush=True)
+            runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.postInitDVs)
 
-sol = ""
-if ctx.task == "polar":
-    runPolar(ctx, flightPointProb, coupling)
-elif ctx.task == "rawPolar":
-    runRawPolar(ctx, flightPointProb, coupling)
-elif ctx.task in OPT_PROB_TASKS:
-    optProb = buildOptProb(ctx, flightPointProb, performanceProb, coupling)
-    if ctx.task in ["opt", "trim"]:
-        sol = runOptimiser(ctx, optProb)
-    elif ctx.task == "derivCheck":
-        checkMultipointDerivs(ctx, optProb)
+    sol = ""
+    if ctx.task == "polar":
+        runPolar(ctx, flightPointProb, coupling)
+    elif ctx.task == "rawPolar":
+        runRawPolar(ctx, flightPointProb, coupling)
+    elif ctx.task in OPT_PROB_TASKS:
+        optProb = buildOptProb(ctx, flightPointProb, performanceProb, coupling)
+        if ctx.task in ["opt", "trim"]:
+            sol = runOptimiser(ctx, optProb)
+        elif ctx.task == "derivCheck":
+            checkMultipointDerivs(ctx, optProb)
 
-writeFinalOutputs(ctx, flightPointProb, performanceProb, sol)
+    writeFinalOutputs(ctx, flightPointProb, performanceProb, sol)
 
-if ctx.args.profile:
-    pr.disable()
-    pr.dump_stats(os.path.join(ctx.outputDir, f"{os.path.basename(ctx.args.output)}_{ctx.globalRank:03d}.prof"))
+    if ctx.args.profile:
+        pr.disable()
+        pr.dump_stats(os.path.join(ctx.outputDir, f"{os.path.basename(ctx.args.output)}_{ctx.globalRank:03d}.prof"))
+
+
+if __name__ == "__main__":
+    main()
