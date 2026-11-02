@@ -798,14 +798,23 @@ def addAeroOutputs(solver) -> None:
 # Now we can create the MPhys model for each flight point
 class AnalysisPoint(Multipoint):
     def initialize(self):
-        self.options.declare("ctx", types=RunContext, desc="Run configuration")
-        self.options.declare("aeroBuilder", desc="MPhys builder for this flight point's aero solver (ADflow or VLM)")
-        self.options.declare("structBuilder", desc="MPhys builder for the TACS structural model")
-        self.options.declare("ldxferBuilder", desc="MPhys builder for the MELD load and displacement transfer")
+        self.options.declare("ctx", types=RunContext, recordable=False, desc="Run configuration")
+        self.options.declare(
+            "aeroBuilder",
+            recordable=False,
+            desc="MPhys builder for this flight point's aero solver (ADflow or VLM)",
+        )
+        self.options.declare("structBuilder", recordable=False, desc="MPhys builder for the TACS structural model")
+        self.options.declare(
+            "ldxferBuilder",
+            recordable=False,
+            desc="MPhys builder for the MELD load and displacement transfer",
+        )
         self.options.declare(
             "aeroOptions",
             default=None,
             types=(dict, type(None)),
+            recordable=False,
             desc="ADflow options, used to create the dummy aero solver, None when using VLM",
         )
         self.options.declare(
