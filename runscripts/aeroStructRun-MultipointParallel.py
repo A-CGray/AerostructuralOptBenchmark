@@ -290,9 +290,9 @@ class TaskSettings:
     liftConScale: float
     # Whether the flight point functions evaluated are only the ones we need gradients of, rather than all disp funcs
     doEvaluateGradFuncsOnly: bool
-    # Whether to run the model before the task itself, and again after setting any `--postInitDVs` (which are set
-    # either way)
-    doInitialRun: bool
+    # Whether this is a dry run (`check`), which sets up the problems and the optimisation problem without running the
+    # model. Any `--postInitDVs` are still set.
+    isDryRun: bool
     # Whether to write solution files from the initial runs
     doWriteInitialSolution: bool
     # Whether to write solution files every time the objective function is evaluated
@@ -359,7 +359,7 @@ def resolveTaskSettings(args: argparse.Namespace) -> TaskSettings:
         ),
         liftConScale=TRIM_LIFT_CON_SCALE if task == "trim" else LIFT_CON_SCALE,
         doEvaluateGradFuncsOnly=task == "derivCheck",
-        doInitialRun=task != "check",
+        isDryRun=task == "check",
         doWriteInitialSolution=task == "analysis",
         doWriteSolutionInObj=task != "opt",
         doWriteSolutionInSens=task == "opt",
@@ -1871,7 +1871,7 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
     return funcs
 
 
-if ctx.settings.doInitialRun:
+if not ctx.settings.isDryRun:
     # ==============================================================================
     # Run the model to initialize everything
     # ==============================================================================
@@ -1888,7 +1888,7 @@ if ctx.settings.doInitialRun:
 if len(ctx.args.postInitDVs) != 0:
     print(f"Proc {ctx.globalRank}: Running again with postInitDVs", flush=True)
     setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
-    if ctx.settings.doInitialRun:
+    if not ctx.settings.isDryRun:
         funcs = runAnalysesRobustly(
             ctx.args.postInitDVs,
             evalFuncs=dispFuncs,
