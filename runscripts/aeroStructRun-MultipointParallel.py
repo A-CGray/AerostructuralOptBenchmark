@@ -32,6 +32,7 @@ import time
 import copy
 import argparse
 from dataclasses import dataclass
+from collections.abc import Callable
 
 # ==============================================================================
 # External Python modules
@@ -1926,6 +1927,263 @@ def setupProblems(
     )
 
 
+@dataclass(frozen=True)
+class PerformanceCoupling:
+    """The functions that pass between the flight point models and the performance model, and the objCon function."""
+
+    # The performance model's inputs, each named after the flight point output that feeds it
+    performanceInputs: list[str]
+    # The promoted names of this proc's flight point model outputs
+    flightPointOutputNames: list[str]
+    # The flight point functions we need derivatives of: objectives, constraints and the inputs of the performance
+    # model's responses
+    gradFuncs: list[str]
+    # The flight point functions to evaluate and store in the history file, including the grad funcs
+    dispFuncs: list[str]
+    # Performance model response name -> the flight point outputs it depends on
+    relevantFlightPointOutputs: dict[str, list[str]]
+    # The multipoint objCon function, which runs the performance model on the flight point functions
+    objCon: Callable[[dict, bool, dict | None], dict]
+
+
+def setupPerformanceCoupling(
+    ctx: RunContext, flightPointProb: om.Problem, performanceProb: om.Problem
+) -> PerformanceCoupling:
+    """Work out the grad and disp funcs and register the objCon and analysis functions with multipoint
+
+    Grad funcs are the functions in the flight point models that we need to compute derivatives of because they are
+    objectives/constraints, or because they're used in the computation of objectives/constraints. Disp funcs are
+    functions that are not required for the computation of objectives/constraints but we want to track and store in the
+    history file anyway
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem, set up
+    performanceProb : om.Problem
+        The performance problem, set up
+
+    Returns
+    -------
+    PerformanceCoupling
+        The grad and disp funcs and the objCon function
+    """
+    performanceInputs = getPromotedInputNames(performanceProb)
+    flightPointOutputNames = getFlightPointOutputNames(ctx, flightPointProb)
+
+    gradFuncs, relevantFlightPointOutputs, dvsForObjCon = computeGradFuncs(
+        ctx, flightPointProb, performanceProb, performanceInputs, flightPointOutputNames
+    )
+    ctx.multiPoint.addDVsAsFunctions(dvsForObjCon)
+    dispFuncs = computeDispFuncs(ctx, gradFuncs, performanceInputs, flightPointOutputNames)
+
+    def objCon(funcs, printOK, passThroughFuncs):
+        return runPerformanceModel(ctx, performanceProb, performanceInputs, funcs, printOK)
+
+    ctx.multiPoint.setObjCon(objCon)
+
+    # --- Create wrapped functions to be used by multipoint sparse ---
+    def procSetObj(x=None):
+        return runAeroStructAnalyses(
+            ctx,
+            flightPointProb,
+            x,
+            evalFuncs=gradFuncs if ctx.settings.doEvaluateGradFuncsOnly else dispFuncs,
+            writeSolution=ctx.settings.doWriteSolutionInObj,
+        )
+
+    ctx.multiPoint.addProcSetObjFunc("all", procSetObj)
+
+    # I set writeSolution to true on the sensitivity function so that we only write solution files on major iterations
+    # (this assumes you're using SNOPT's derivative-free line search)
+    def procSetSens(x=None, funcs=None):
+        return computeSens(
+            ctx,
+            flightPointProb,
+            x,
+            funcs,
+            gradFuncs=gradFuncs,
+            dispFuncs=gradFuncs if ctx.settings.doEvaluateGradFuncsOnly else dispFuncs,
+            writeSolution=ctx.settings.doWriteSolutionInSens,
+        )
+
+    ctx.multiPoint.addProcSetSensFunc("all", procSetSens)
+
+    return PerformanceCoupling(
+        performanceInputs=performanceInputs,
+        flightPointOutputNames=flightPointOutputNames,
+        gradFuncs=gradFuncs,
+        dispFuncs=dispFuncs,
+        relevantFlightPointOutputs=relevantFlightPointOutputs,
+        objCon=objCon,
+    )
+
+
+def computeGradFuncs(
+    ctx: RunContext,
+    flightPointProb: om.Problem,
+    performanceProb: om.Problem,
+    performanceInputs: list[str],
+    flightPointOutputNames: list[str],
+) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    """Work out the grad funcs, the flight point functions that we need derivatives of
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    performanceProb : om.Problem
+        The performance problem
+    performanceInputs : list[str]
+        The performance model's inputs, each named after the flight point output that feeds it
+    flightPointOutputNames : list[str]
+        The promoted names of this proc's flight point model outputs
+
+    Returns
+    -------
+    gradFuncs : list[str]
+        The grad funcs, the same on every proc of this flight point
+    relevantFlightPointOutputs : dict[str, list[str]]
+        The flight point outputs that each performance model response depends on
+    dvsForObjCon : list[str]
+        The design variables that multipoint must pass to the objCon function, the same on every proc
+    """
+    gradFuncs = []
+
+    # --- Get design variables, constraints and objectives from OpenMDAO models ---
+    designVariables = {}
+    for dv in flightPointProb.model.get_design_vars().values():
+        designVariables[dv["name"]] = dv
+
+    # Any constraints or objectives that are direct outputs of the flight point models and aren't linear should be added
+    # to gradFuncs, apart from the performance output constraints, which are only added to gradFuncs below if a
+    # performance constraint depends on them
+    for con in flightPointProb.model.get_constraints().values():
+        isPerformanceOutput = con["alias"] is not None and con["alias"].startswith(PERFORMANCE_OUTPUT_ALIAS_PREFIX)
+        if not con["linear"] and not isPerformanceOutput:
+            conName = getPromName(flightPointProb.model, con["source"])
+            gradFuncs.append(conName)
+
+    for obj in flightPointProb.model.get_objectives().values():
+        gradFuncs.append(obj["name"])
+
+    # Up to now, we'll have caught any gradFuncs from the MPhys models that we need to compute the derivatives of
+    # because they're directly used as a constraint/objective, now we need to add the functions that we need to compute
+    # the gradients of because they're inputs to the performance model that computes further objectives/constraints.
+    relevantFlightPointOutputs = {}
+    dvsForObjCon = []
+    performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceInputs]
+    # Objectives are included too, so that any flight point outputs a performance model objective depends on get
+    # gradients
+    performanceResponses = list(performanceProb.model.get_constraints().values()) + list(
+        performanceProb.model.get_objectives().values()
+    )
+    for con in performanceResponses:
+        # Step 1: find which performance model inputs this constraint depends on, getRelevantInputs takes the
+        # candidate inputs explicitly so they don't need to be declared as design variables
+        fullConName = con["source"]
+        relevantInputs = getRelevantInputs(performanceProb.model, fullConName, performanceInputSources)
+        relevantInputs = [getPromName(performanceProb.model, inp) for inp in relevantInputs]
+        # Step 2: each performance model input has the same name as the flight point output that feeds it, so outputs
+        # is a list of all the variables from all the flight point problems whose derivatives are needed to compute
+        # this constraint in the performance model.
+        outputs = relevantInputs
+
+        # Next save these outputs for later when we need to figure out which design variables these constraints depend
+        # on
+        relevantFlightPointOutputs[con["name"]] = list(set(outputs))
+
+        # For each output, we either need to add it to gradFuncs so that we know to compute it's derivatives or, if it
+        # is a design variable, we need to tell multipoint to pass that design variable to the objCon function.
+        for out in outputs:
+            if out in flightPointOutputNames:
+                if out in designVariables:
+                    dvsForObjCon.append(out)
+                elif out not in gradFuncs:
+                    gradFuncs.append(out)
+    # We need to call addDVsAsFunctions with the same inputs on all procs because I don't think multipoint does any
+    # collection across procs
+    dvsForObjCon = gatherUnion(ctx.globalComm, dvsForObjCon)
+
+    # broadcast gradFuncs to all procs in this set
+    gradFuncs = ctx.ptComm.bcast(gradFuncs, root=0)
+
+    if ctx.ptRank == 0:
+        printBanner({"Grad funcs": gradFuncs})
+
+    return gradFuncs, relevantFlightPointOutputs, dvsForObjCon
+
+
+def computeDispFuncs(
+    ctx: RunContext, gradFuncs: list[str], performanceInputs: list[str], flightPointOutputNames: list[str]
+) -> list[str]:
+    """Work out the disp funcs, the flight point functions to evaluate and store in the history file
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    gradFuncs : list[str]
+        The grad funcs
+    performanceInputs : list[str]
+        The performance model's inputs, each named after the flight point output that feeds it
+    flightPointOutputNames : list[str]
+        The promoted names of this proc's flight point model outputs
+
+    Returns
+    -------
+    list[str]
+        The disp funcs, which include the grad funcs, the same on every proc of this flight point
+    """
+    # First add all the grad funcs, and all the functions we need to pass to the performance model
+    dispFuncs = gradFuncs.copy()
+    dispFuncs += [f for f in performanceInputs if f in flightPointOutputNames]
+
+    # Now add any additional functions we want to track in the history file even though they're not required for
+    # optimisation
+    for output in flightPointOutputNames:
+        # Quantities that exist on all flight points but we only want to save them from a single proc set
+        if ctx.ptID == 0:
+            patterns = [
+                "*mass",  # Component-wise masses
+                "wingboxVolume",  # Wingbox/rib bay volumes
+                "RibBay-Volume",
+                "bayFuelMasses",
+            ]
+            for pattern in patterns:
+                if fnmatch.fnmatch(output, pattern):
+                    dispFuncs.append(output)
+        patterns = [
+            "PlanformValues.*",  # WimpressCalc outputs
+            "*SectionToC",  # Section t/c values
+            "*aero_post.c*",  # aero coefficients
+            "*correctedDrag",  # Corrected drag values
+            "avgToC",  # Average wing t/c
+            "*CLmax_*",  # CLmax values (clean and flapped)
+            "*takeoff|v*",  # Takeoff speeds
+            "*takeoff.bfl.*",  # Balanced field length speeds and distances
+            "*ksFailure",  # TACS failure values
+        ]
+        for pattern in patterns:
+            if fnmatch.fnmatch(output, pattern):
+                dispFuncs.append(output)
+
+    # Remove duplicate entries from dispFuncs
+    dispFuncs = list(set(dispFuncs))
+
+    # broadcast dispFuncs to all procs in this set
+    dispFuncs = ctx.ptComm.bcast(dispFuncs, root=0)
+
+    if ctx.ptRank == 0:
+        printBanner({"Disp funcs": dispFuncs})
+
+    return dispFuncs
+
+
 ctx = buildRunContext(parser.parse_args(), MPI.COMM_WORLD)
 
 if ctx.args.profile:
@@ -1936,174 +2194,22 @@ if ctx.args.profile:
 
 prepareOutputs(ctx)
 flightPointProb, performanceProb = buildProblems(ctx)
-performanceInputs = getPromotedInputNames(performanceProb)
-flightPointOutputNames = getFlightPointOutputNames(ctx, flightPointProb)
-
-
-# ==============================================================================
-# Define grad and disp funcs
-# ==============================================================================
-# Grad funcs are the functions in the flight point models that we need to compute derivatives of because they are
-# objectives/constraints, or because they're used in the computation of objectives/constraints. Disp funcs are functions
-# that are not required for the computation of objectives/constraints but we want to track and store in the history file
-# anyway
-gradFuncs = []
-
-# --- Get design variables, constraints and objectives from OpenMDAO models ---
-designVariables = {}
-for dv in flightPointProb.model.get_design_vars().values():
-    designVariables[dv["name"]] = dv
-
-# Any constraints or objectives that are direct outputs of the flight point models and aren't linear should be added to
-# gradFuncs, apart from the performance output constraints, which are only added to gradFuncs below if a performance
-# constraint depends on them
-for con in flightPointProb.model.get_constraints().values():
-    isPerformanceOutput = con["alias"] is not None and con["alias"].startswith(PERFORMANCE_OUTPUT_ALIAS_PREFIX)
-    if not con["linear"] and not isPerformanceOutput:
-        conName = getPromName(flightPointProb.model, con["source"])
-        gradFuncs.append(conName)
-
-for obj in flightPointProb.model.get_objectives().values():
-    gradFuncs.append(obj["name"])
-
-# Up to now, we'll have caught any gradFuncs from the MPhys models that we need to compute the derivatives of
-# because they're directly used as a constraint/objective, now we need to add the functions that we need to compute
-# the gradients of because they're inputs to the performance model that computes further objectives/constraints.
-relevantFlightPointOutputs = {}
-dvsForObjCon = []
-performanceInputSources = [getSource(performanceProb.model, inpName) for inpName in performanceInputs]
-# Objectives are included too, so that any flight point outputs a performance model objective depends on get gradients
-performanceResponses = list(performanceProb.model.get_constraints().values()) + list(
-    performanceProb.model.get_objectives().values()
-)
-for con in performanceResponses:
-    # Step 1: find which performance model inputs this constraint depends on, getRelevantInputs takes the candidate
-    # inputs explicitly so they don't need to be declared as design variables
-    fullConName = con["source"]
-    promConName = getPromName(performanceProb.model, fullConName)
-    relevantInputs = getRelevantInputs(performanceProb.model, fullConName, performanceInputSources)
-    relevantInputs = [getPromName(performanceProb.model, inp) for inp in relevantInputs]
-    # Step 2: each performance model input has the same name as the flight point output that feeds it, so outputs is
-    # a list of all the variables from all the flight point problems whose derivatives are needed to compute this
-    # constraint in the performance model.
-    outputs = relevantInputs
-
-    # Next save these outputs for later when we need to figure out which design variables these constraints depend on
-    relevantFlightPointOutputs[con["name"]] = list(set(outputs))
-
-    # For each output, we either need to add it to gradFuncs so that we know to compute it's derivatives or, if it is a
-    # design variable, we need to tell multipoint to pass that design variable to the objCon function.
-    for out in outputs:
-        if out in flightPointOutputNames:
-            if out in designVariables:
-                dvsForObjCon.append(out)
-            elif out not in gradFuncs:
-                gradFuncs.append(out)
-# We need to call addDVsAsFunctions with the same inputs on all procs because I don't think multipoint does any
-# collection across procs
-dvsForObjCon = gatherUnion(ctx.globalComm, dvsForObjCon)
-ctx.multiPoint.addDVsAsFunctions(dvsForObjCon)
-
-# broadcast gradFuncs to all procs in this set
-gradFuncs = ctx.ptComm.bcast(gradFuncs, root=0)
-
-if ctx.ptRank == 0:
-    printBanner({"Grad funcs": gradFuncs})
-
-# --- Disp funcs ---
-# First add all the grad funcs, and all the functions we need to pass to the performance model
-dispFuncs = gradFuncs.copy()
-dispFuncs += [f for f in performanceInputs if f in flightPointOutputNames]
-
-# Now add any additional functions we want to track in the history file even though they're not required for
-# optimisation
-for output in flightPointOutputNames:
-    # Quantities that exist on all flight points but we only want to save them from a single proc set
-    if ctx.ptID == 0:
-        patterns = [
-            "*mass",  # Component-wise masses
-            "wingboxVolume",  # Wingbox/rib bay volumes
-            "RibBay-Volume",
-            "bayFuelMasses",
-        ]
-        for pattern in patterns:
-            if fnmatch.fnmatch(output, pattern):
-                dispFuncs.append(output)
-    patterns = [
-        "PlanformValues.*",  # WimpressCalc outputs
-        "*SectionToC",  # Section t/c values
-        "*aero_post.c*",  # aero coefficients
-        "*correctedDrag",  # Corrected drag values
-        "avgToC",  # Average wing t/c
-        "*CLmax_*",  # CLmax values (clean and flapped)
-        "*takeoff|v*",  # Takeoff speeds
-        "*takeoff.bfl.*",  # Balanced field length speeds and distances
-        "*ksFailure",  # TACS failure values
-    ]
-    for pattern in patterns:
-        if fnmatch.fnmatch(output, pattern):
-            dispFuncs.append(output)
-
-# Remove duplicate entries from dispFuncs
-dispFuncs = list(set(dispFuncs))
-
-# broadcast dispFuncs to all procs in this set
-dispFuncs = ctx.ptComm.bcast(dispFuncs, root=0)
-
-if ctx.ptRank == 0:
-    printBanner({"Disp funcs": dispFuncs})
-
-
-def objCon(funcs, printOK, passThroughFuncs):
-    return runPerformanceModel(ctx, performanceProb, performanceInputs, funcs, printOK)
-
-
-ctx.multiPoint.setObjCon(objCon)
-
-
-# ==============================================================================
-# Create wrapped functions to be used by multipoint sparse
-# ==============================================================================
-def procSetObj(x=None):
-    return runAeroStructAnalyses(
-        ctx,
-        flightPointProb,
-        x,
-        evalFuncs=gradFuncs if ctx.settings.doEvaluateGradFuncsOnly else dispFuncs,
-        writeSolution=ctx.settings.doWriteSolutionInObj,
-    )
-
-
-ctx.multiPoint.addProcSetObjFunc("all", procSetObj)
-
-
-# I set writeSolution to true on the sensitivity function so that we only write solution files on major iterations
-# (this assumes you're using SNOPT's derivative-free line search)
-def procSetSens(x=None, funcs=None):
-    return computeSens(
-        ctx,
-        flightPointProb,
-        x,
-        funcs,
-        gradFuncs=gradFuncs,
-        dispFuncs=gradFuncs if ctx.settings.doEvaluateGradFuncsOnly else dispFuncs,
-        writeSolution=ctx.settings.doWriteSolutionInSens,
-    )
-
-
-ctx.multiPoint.addProcSetSensFunc("all", procSetSens)
-
+coupling = setupPerformanceCoupling(ctx, flightPointProb, performanceProb)
 
 if not ctx.settings.isDryRun:
     # ==============================================================================
     # Run the model to initialize everything
     # ==============================================================================
     funcs = runAnalysesRobustly(
-        ctx, flightPointProb, ctx.args.initDVs, evalFuncs=dispFuncs, writeSolution=ctx.settings.doWriteInitialSolution
+        ctx,
+        flightPointProb,
+        ctx.args.initDVs,
+        evalFuncs=coupling.dispFuncs,
+        writeSolution=ctx.settings.doWriteInitialSolution,
     )
     # Before proceeding, combine the function values from all flight points and send them to every proc
     funcs = gatherMergedDict(ctx.globalComm, funcs)
-    funcs = objCon(funcs, True, None)
+    funcs = coupling.objCon(funcs, True, None)
     if ctx.ptRank == 0:
         pp(funcs)
 
@@ -2116,11 +2222,11 @@ if len(ctx.args.postInitDVs) != 0:
             ctx,
             flightPointProb,
             ctx.args.postInitDVs,
-            evalFuncs=dispFuncs,
+            evalFuncs=coupling.dispFuncs,
             writeSolution=ctx.settings.doWriteInitialSolution,
         )
         funcs = gatherMergedDict(ctx.globalComm, funcs)
-        funcs = objCon(funcs, True, None)
+        funcs = coupling.objCon(funcs, True, None)
 
 if ctx.task == "polar":
     alphaPert = 1.0
@@ -2137,7 +2243,7 @@ if ctx.task == "polar":
                 # Setting the Mach number updates the AeroProblem's other flow conditions, VLM reads them from inputs
                 for suffix, fpAttr, _ in VLM_FLOW_CONDITIONS:
                     x[f"dvs.{ctx.localFlightPoint.name}-{suffix}"] = getattr(ctx.localFlightPoint, fpAttr)
-            funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=dispFuncs, writeSolution=True)
+            funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
             writeOutputs(
                 flightPointProb,
                 outputDir=ctx.localOutputDir,
@@ -2155,7 +2261,7 @@ if ctx.task == "rawPolar":
     for alphaIndex, alpha in enumerate(alphas):
         # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
         x = {f"dvs.{ctx.localFlightPoint.name}_AOA": alpha}
-        funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=dispFuncs, writeSolution=True)
+        funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
         writeOutputs(
             flightPointProb,
             outputDir=ctx.localOutputDir,
@@ -2203,10 +2309,10 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
             print(f"\n\nPerformance constraint {con['name']} depends on performance inputs:", flush=True)
 
         relevantDVs = []
-        for output in relevantFlightPointOutputs[con["name"]]:
+        for output in coupling.relevantFlightPointOutputs[con["name"]]:
             if ctx.ptRank == 0:
                 print(f"- {output}", flush=True)
-            if output in flightPointOutputNames:
+            if output in coupling.flightPointOutputNames:
                 if output in flightPointProb.model.get_design_vars():
                     # If the output is itself a design variable then we can just add it straight away
                     relevantDVs.append(output)
@@ -2250,7 +2356,7 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
     # If any of the objective or constraint functions are also required as inputs for the performance model, we need to
     # explicitly tell this to multipoint so that it passes them to the objCon function
     for func in list(optProb.constraints.keys()) + list(optProb.objectives.keys()):
-        if func in performanceInputs:
+        if func in coupling.performanceInputs:
             if ctx.ptRank == 0:
                 print(f"Adding {func} as an objCon input function", flush=True)
             ctx.multiPoint.addConsAsObjConInputs(func)
