@@ -24,6 +24,7 @@ from hypothesis.strategies import data, integers, lists, sampled_from, text
 from utils import (
     BANNER_LINE,
     checkInputsHaveSources,
+    checkPerformanceOutputsDeclared,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
@@ -416,6 +417,98 @@ class TestCheckInputsHaveSources(unittest.TestCase):
     def test_empty_inputs_pass(self, allRankOutputNames):
         """Assert that checking no inputs raises no error, whatever outputs the ranks have."""
         self.assertIsNone(checkInputsHaveSources([], allRankOutputNames[0], FakeComm(0, allRankOutputNames)))
+
+
+TEST_ALIAS_PREFIX = "_testAlias"
+DECLARABLE_OUTPUT_NAMES = ["a", "b", "c"]
+
+
+def buildDeclaredOutputsTestProblem(declaredNames: list[str]) -> om.Problem:
+    """Build a toy problem with design variable `x`, outputs `a`, `b` and `c`, and aliased constraints on `declaredNames`."""
+    prob = om.Problem()
+    ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+    ivc.add_output("x", 1.0)
+    prob.model.add_subsystem("comp", om.ExecComp(["a = 2*x", "b = 3*x", "c = 4*x"]), promotes=["*"])
+    prob.model.add_design_var("x")
+    for name in declaredNames:
+        prob.model.add_constraint(name, alias=f"{TEST_ALIAS_PREFIX}{name}")
+    prob.setup()
+    prob.final_setup()
+    return prob
+
+
+def singleRankComm() -> FakeComm:
+    """Return a fake communicator with one rank."""
+    return FakeComm(0, [[]])
+
+
+class TestCheckPerformanceOutputsDeclared(unittest.TestCase):
+    @given(lists(sampled_from(DECLARABLE_OUTPUT_NAMES), unique=True))
+    def test_raises_exactly_when_an_output_is_undeclared(self, declaredNames):
+        """
+        Given a model on which some of its performance outputs are declared as aliased constraints,
+        when the declarations are checked,
+        then a ValueError naming every undeclared output is raised if any is undeclared, and nothing is raised otherwise.
+        """
+        prob = buildDeclaredOutputsTestProblem(declaredNames)
+        undeclaredNames = sorted(set(DECLARABLE_OUTPUT_NAMES) - set(declaredNames))
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        if len(undeclaredNames) == 0:
+            checkPerformanceOutputsDeclared(
+                prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+            )
+        else:
+            with self.assertRaises(ValueError) as context:
+                checkPerformanceOutputsDeclared(
+                    prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+                )
+            self.assertIn(repr(undeclaredNames), str(context.exception))
+
+    def test_design_variables_need_no_declaration(self):
+        """Assert that a performance output that is a design variable of the model doesn't need an aliased constraint."""
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        checkPerformanceOutputsDeclared(
+            prob.model, ["x"] + DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+        )
+
+    def test_names_this_model_does_not_output_are_ignored(self):
+        """Assert that performance outputs created by other flight point models don't need a declaration on this one."""
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        checkPerformanceOutputsDeclared(prob.model, ["elsewhere"], outputNames, TEST_ALIAS_PREFIX, singleRankComm())
+
+    def test_undeclared_output_on_another_rank_raises_here(self):
+        """
+        Given a rank on which every performance output is declared, and another rank with an undeclared one,
+        when the declarations are checked,
+        then a ValueError naming the other rank's undeclared output is raised on this rank too.
+        """
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        otherRankUndeclaredNames = ["elsewhere"]
+        comm = FakeComm(0, [[], otherRankUndeclaredNames])
+        with self.assertRaises(ValueError) as context:
+            checkPerformanceOutputsDeclared(prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, comm)
+        self.assertIn(repr(otherRankUndeclaredNames), str(context.exception))
+
+    def test_constraints_with_other_aliases_do_not_count(self):
+        """
+        Given an output that is constrained, but not with the performance output alias prefix,
+        when the declarations are checked,
+        then a ValueError naming it is raised.
+        """
+        prob = om.Problem()
+        ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", 1.0)
+        prob.model.add_subsystem("comp", om.ExecComp("a = 2*x"), promotes=["*"])
+        prob.model.add_design_var("x")
+        prob.model.add_constraint("a", upper=1.0)
+        prob.setup()
+        prob.final_setup()
+        with self.assertRaises(ValueError) as context:
+            checkPerformanceOutputsDeclared(prob.model, ["a"], ["a", "x"], TEST_ALIAS_PREFIX, singleRankComm())
+        self.assertIn(repr(["a"]), str(context.exception))
 
 
 if __name__ == "__main__":

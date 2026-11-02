@@ -460,6 +460,44 @@ def checkInputsHaveSources(inputNames: Iterable[str], localOutputNames: Iterable
         raise ValueError(f"These inputs are not outputs of any flight point model: {missingNames}")
 
 
+def checkPerformanceOutputsDeclared(
+    model, performanceOutputNames: Iterable[str], localOutputNames: Iterable[str], aliasPrefix: str, comm
+) -> None:
+    """Check that each performance output a model has is declared as a constraint aliased with a given prefix
+
+    Performance outputs that are design variables of the model don't need declaring. Call this after final_setup. This is
+    collective, so every rank of `comm` must call it, and every rank raises if any rank finds an undeclared output.
+
+    Parameters
+    ----------
+    model : openmdao.core.group.Group
+        The model whose constraints are checked
+    performanceOutputNames : Iterable[str]
+        Promoted names of the outputs that should be declared, if the model has them
+    localOutputNames : Iterable[str]
+        Promoted names of the model's outputs
+    aliasPrefix : str
+        The prefix of the declared constraints' aliases
+    comm : MPI communicator
+        Communicator over whose ranks the undeclared names are gathered
+
+    Raises
+    ------
+    ValueError
+        If, on any rank, a performance output the model has is neither a design variable nor declared, listing the
+        undeclared names from all ranks
+    """
+    designVarNames = {dv["name"] for dv in model.get_design_vars().values()}
+    requiredNames = (set(performanceOutputNames) & set(localOutputNames)) - designVarNames
+    declaredNames = set()
+    for con in model.get_constraints().values():
+        if con["alias"] is not None and con["alias"].startswith(aliasPrefix):
+            declaredNames.add(con["name"])
+    undeclaredNames = gatherUnion(comm, requiredNames - declaredNames)
+    if len(undeclaredNames) > 0:
+        raise ValueError(f"These performance outputs are not declared as {aliasPrefix} constraints: {undeclaredNames}")
+
+
 def convertSensDict(openmdaoSensDict):
     """
     Convert the OpenMDAO sensitivity dictionary into the format expected by pyOptSparse

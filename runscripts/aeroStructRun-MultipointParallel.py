@@ -88,6 +88,7 @@ from utils import (
     getAeroForceName,
     getPromotedInputNames,
     checkInputsHaveSources,
+    checkPerformanceOutputsDeclared,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
@@ -1506,6 +1507,15 @@ if ctx.ptRank == 0:
 # `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
 flightPointProb.final_setup()
 performanceProb.final_setup()
+
+# A performance output that AnalysisPoint forgot to declare would silently lose its adjoint caching, so fail instead
+checkPerformanceOutputsDeclared(
+    flightPointProb.model,
+    flightPointProb.model.options["performanceOutputNames"],
+    flightPointProbOutputs.keys(),
+    PERFORMANCE_OUTPUT_ALIAS_PREFIX,
+    ctx.globalComm,
+)
 
 # ==============================================================================
 # Potentially set initial DVs from a previous run
