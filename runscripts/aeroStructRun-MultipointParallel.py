@@ -85,7 +85,6 @@ from utils import (
     AverageComp,
     getRelevantInputs,
     getDesignVarSources,
-    allowResponsesAfterSetup,
     getAeroForceName,
     getPromotedInputNames,
     checkInputsHaveSources,
@@ -123,6 +122,9 @@ VLM_FLOW_CONDITIONS = [
     ("v", "V", "m/s"),
     (MPhysVariables.Aerodynamics.FlowConditions.REYNOLDS_NUMBER, "re", "1/m"),
 ]
+
+# Alias prefix of the flight point outputs that AnalysisPoint declares as constraints for the performance model
+PERFORMANCE_OUTPUT_ALIAS_PREFIX = "_performanceOutput"
 
 # --- Figure out where to put the results ---
 OUTPUT_PARENT_DIR = getOutputDir()
@@ -806,6 +808,12 @@ class AnalysisPoint(Multipoint):
             types=(dict, type(None)),
             desc="ADflow options, used to create the dummy aero solver, None when using VLM",
         )
+        self.options.declare(
+            "performanceOutputNames",
+            types=set,
+            desc="Names of the outputs the performance model uses, any this point creates are declared as unbounded "
+            "aliased constraints",
+        )
 
     def setup(self):
         ctx = self.options["ctx"]
@@ -960,8 +968,11 @@ class AnalysisPoint(Multipoint):
                 lower=0.0,
                 scaler=1e-4,
             )
+        else:
+            self._declarePerformanceOutput(fuelDVName)
 
         setupFuelMassGroup(self, fuelDVName, numRibBays=self.numRibBays)
+        self._declarePerformanceOutput("wingboxVolume")
 
         # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
         mergeStructDVs(self, fuelMassDVInds, sizingDVInds)
@@ -1030,6 +1041,7 @@ class AnalysisPoint(Multipoint):
                 promotes_outputs=["*"],
             )
             self.connect(inputName, f"{outputName}CorrectionComp.F")
+            self._declarePerformanceOutput(getAeroForceName(self.fpName, outputName))
 
     def _addPerformanceGroups(self) -> None:
         """Set up the performance calculations"""
@@ -1071,6 +1083,7 @@ class AnalysisPoint(Multipoint):
                     ("wingboxMass", f"{self.fpName}.mass"),
                 ],
             )
+            self._declarePerformanceOutput("landingGrossMass")
         if ctx.isCruisePoint:
             fuelBurnGroup = performanceCalc.FuelBurnGroup(
                 aircraftSpecs=ctx.aircraftSpecs,
@@ -1086,6 +1099,8 @@ class AnalysisPoint(Multipoint):
                     "takeoffMass",
                 ],
             )
+            for outputName in ["totalFuelBurn", "cruiseStartMass", "takeoffMass"]:
+                self._declarePerformanceOutput(outputName)
             for force in [
                 "lift",
                 "drag",
@@ -1102,6 +1117,7 @@ class AnalysisPoint(Multipoint):
                 cruiseMass,
                 promotes_outputs=[("midSegmentMass", "midCruiseMass")],
             )
+            self._declarePerformanceOutput("midCruiseMass")
             self.connect("landingGrossMass", "midCruiseMass.finalMass")
             self.connect("cruiseStartMass", "midCruiseMass.initialMass")
 
@@ -1159,6 +1175,24 @@ class AnalysisPoint(Multipoint):
                 self.connect("PlanformValues.QCSweep", "takeoff.ac|geom|wing|c4sweep")
                 self.connect("PlanformValues.trapTaper", "takeoff.ac|geom|wing|taper")
                 self.connect("avgToC", "takeoff.ac|geom|wing|toverc")
+
+    def _declarePerformanceOutput(self, outputName: str) -> None:
+        """Declare an output as an unbounded constraint if the performance model uses it
+
+        The coupled adjoint solver's rhs_checking ("auto") only creates its solution cache if, at final_setup, some
+        declared responses depend on others. The flight point outputs that feed the performance model (masses, fuel
+        burn, lift) are such responses, and caching their adjoints saves most of the cruise adjoint solves, so we
+        declare them as unbounded constraints, aliased with ``PERFORMANCE_OUTPUT_ALIAS_PREFIX``. These constraints are
+        skipped when building gradFuncs and the pyOptSparse problem. The caller leaves design variables and objectives
+        out of the ``performanceOutputNames`` option, because they are already declared.
+
+        Parameters
+        ----------
+        outputName : str
+            Promoted name of an output this point has just created
+        """
+        if outputName in self.options["performanceOutputNames"]:
+            self.add_constraint(outputName, alias=f"{PERFORMANCE_OUTPUT_ALIAS_PREFIX}{outputName}")
 
     def _configureFlowConditions(self) -> None:
         """Add the angle of attack DV and give the aero solver its flow conditions"""
@@ -1313,19 +1347,22 @@ performanceProb.model = performanceCalc.FuelAndMassConstraintGroup(
 # ==============================================================================
 # Setup objective
 # ==============================================================================
+# Name of the objective declared on this flight point, if any
+flightPointObjectiveName = None
 if ctx.settings.doUseStructMassObjective:
     if ctx.ptID == 0:
         # For the trim task we setup a dummy objective that doesn't depend on the trim variables so that the optimiser
         # just satisfies the trim constraints
-        flightPointProb.model.add_objective(
-            f"{ctx.localFlightPoint.name}.mass", scaler=1e-3, cache_linear_solution=True
-        )
+        flightPointObjectiveName = f"{ctx.localFlightPoint.name}.mass"
+        flightPointProb.model.add_objective(flightPointObjectiveName, scaler=1e-3, cache_linear_solution=True)
 elif ctx.args.optType == "fuelburn":
     if ctx.isCruisePoint:
-        flightPointProb.model.add_objective("totalFuelBurn", scaler=1e-4, cache_linear_solution=True)
+        flightPointObjectiveName = "totalFuelBurn"
+        flightPointProb.model.add_objective(flightPointObjectiveName, scaler=1e-4, cache_linear_solution=True)
 elif ctx.args.optType == "pareto":
     if ctx.isCruisePoint:
-        flightPointProb.model.add_objective("paretoObj", scaler=1.0, cache_linear_solution=True)
+        flightPointObjectiveName = "paretoObj"
+        flightPointProb.model.add_objective(flightPointObjectiveName, scaler=1.0, cache_linear_solution=True)
 else:
     raise ValueError("No objective function defined")
 
@@ -1431,6 +1468,15 @@ if ctx.settings.doAddDesignConstraints:
 # ==============================================================================
 # Setup the OpenMDAO models
 # ==============================================================================
+# Setup the performance model and get the names of its inputs. Each performance model input takes its value from the
+# flight point output with the same name, which is checked once the flight point model is set up.
+performanceProb.setup(force_alloc_complex=True)
+performanceInputs = getPromotedInputNames(performanceProb)
+
+# The flight point model declares the performance model's inputs as constraints when it creates them (see
+# AnalysisPoint._declarePerformanceOutput), apart from its objective, which is already a response
+flightPointProb.model.options["performanceOutputNames"] = set(performanceInputs) - {flightPointObjectiveName}
+
 # Setup the model for this proc's flight point and get the names of its outputs
 flightPointProb.setup(force_alloc_complex=isComplex, mode="rev")
 tmp = ctx.ptComm.bcast(flightPointProb.model.list_outputs(out_stream=None), root=0)
@@ -1438,31 +1484,11 @@ flightPointProbOutputs = {}
 for output in tmp:
     flightPointProbOutputs[output[1]["prom_name"]] = output[1]
 
-# Setup the performance model and get the names of its inputs. Each performance model input takes its value from the
-# flight point output with the same name, so check that some flight point model has an output with each name.
-performanceProb.setup(force_alloc_complex=True)
-performanceInputs = getPromotedInputNames(performanceProb)
+# Check that some flight point model has an output with the name of each performance model input
 checkInputsHaveSources(performanceInputs, flightPointProbOutputs.keys(), ctx.globalComm)
 
 if ctx.ptRank == 0:
     printBanner({"Performance inputs": performanceInputs})
-
-# The coupled adjoint solver's rhs_checking ("auto") only creates its solution cache if, at final_setup, some declared
-# responses depend on others. The flight point outputs that feed the performance model (masses, fuel burn, lift) are
-# such responses, and caching their adjoints saves most of the cruise adjoint solves, so we declare them as unbounded
-# constraints. They can only be declared after setup, because that's when we know which outputs this flight point has.
-# These constraints are skipped when building gradFuncs and the pyOptSparse problem.
-PERFORMANCE_OUTPUT_ALIAS_PREFIX = "_performanceOutput"
-existingResponses = (
-    list(flightPointProb.model._responses.keys())
-    + list(flightPointProb.model._static_responses.keys())
-    + list(flightPointProb.model._design_vars.keys())
-    + list(flightPointProb.model._static_design_vars.keys())
-)
-with allowResponsesAfterSetup(flightPointProb):
-    for outputName in performanceInputs:
-        if outputName in flightPointProbOutputs and outputName not in existingResponses:
-            flightPointProb.model.add_constraint(outputName, alias=f"{PERFORMANCE_OUTPUT_ALIAS_PREFIX}{outputName}")
 
 
 # Need to call final_setup so that sizes of inputs and outputs are figured out correctly, otherwise calling

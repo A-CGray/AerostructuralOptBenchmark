@@ -4,7 +4,6 @@
 import re
 import os
 import sys
-from contextlib import contextmanager
 from typing import Iterable, Optional, Union
 
 # ==============================================================================
@@ -15,7 +14,6 @@ import openmdao.api as om
 
 # get_relevance is OpenMDAO-internal (not in openmdao.api or the docs), so this is the only place that imports it
 from openmdao.utils.relevance import get_relevance
-from openmdao.core.constants import _SetupStatus
 from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
@@ -519,40 +517,6 @@ def getRelevantInputs(model, outputName: str, candidateNames: list[str]) -> list
 def getDesignVarSources(model) -> list[str]:
     """Get the absolute source names of all design variables declared in an OpenMDAO model"""
     return [meta["source"] for meta in model.get_design_vars().values()]
-
-
-@contextmanager
-def allowResponsesAfterSetup(prob):
-    """Allow responses (constraints/objectives) to be added to a problem's model after setup
-
-    Responses added after setup normally go into OpenMDAO's "static" responses, which final_setup ignores. Inside this
-    context they are added as if setup were still running, so the next final_setup includes them. This relies on
-    OpenMDAO's private ``_problem_meta["static_mode"]`` flag, which is restored even if an error is raised.
-
-    Parameters
-    ----------
-    prob : openmdao.core.problem.Problem
-        Problem that has been set up but not yet final_setup
-
-    Raises
-    ------
-    RuntimeError
-        If the problem hasn't been set up, or final_setup has already been called, so any responses added would never be
-        included
-    """
-    setupStatus = prob._metadata["setup_status"]
-    if setupStatus < _SetupStatus.POST_SETUP or setupStatus >= _SetupStatus.POST_FINAL_SETUP:
-        raise RuntimeError(
-            "allowResponsesAfterSetup can only be used after setup and before final_setup, but the problem's setup "
-            f"status is {setupStatus.name}"
-        )
-    problemMeta = prob.model._problem_meta
-    wasStaticMode = problemMeta["static_mode"]
-    problemMeta["static_mode"] = False
-    try:
-        yield
-    finally:
-        problemMeta["static_mode"] = wasStaticMode
 
 
 def addDesignVarsFromOpenMDAO(optProb, omProb):
