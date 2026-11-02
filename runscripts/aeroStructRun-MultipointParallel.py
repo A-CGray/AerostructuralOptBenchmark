@@ -2184,28 +2184,24 @@ def computeDispFuncs(
     return dispFuncs
 
 
-ctx = buildRunContext(parser.parse_args(), MPI.COMM_WORLD)
+def runInitialAnalyses(
+    ctx: RunContext, flightPointProb: om.Problem, coupling: PerformanceCoupling, dvFiles: list[str]
+) -> None:
+    """Run the model to initialize everything
 
-if ctx.args.profile:
-    import cProfile
-
-    pr = cProfile.Profile()
-    pr.enable()
-
-prepareOutputs(ctx)
-flightPointProb, performanceProb = buildProblems(ctx)
-coupling = setupPerformanceCoupling(ctx, flightPointProb, performanceProb)
-
-if not ctx.settings.isDryRun:
-    # ==============================================================================
-    # Run the model to initialize everything
-    # ==============================================================================
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    coupling : PerformanceCoupling
+        The grad and disp funcs and the objCon function
+    dvFiles : list[str]
+        DV files to set again if a failed analysis has to be reset
+    """
     funcs = runAnalysesRobustly(
-        ctx,
-        flightPointProb,
-        ctx.args.initDVs,
-        evalFuncs=coupling.dispFuncs,
-        writeSolution=ctx.settings.doWriteInitialSolution,
+        ctx, flightPointProb, dvFiles, evalFuncs=coupling.dispFuncs, writeSolution=ctx.settings.doWriteInitialSolution
     )
     # Before proceeding, combine the function values from all flight points and send them to every proc
     funcs = gatherMergedDict(ctx.globalComm, funcs)
@@ -2213,27 +2209,31 @@ if not ctx.settings.isDryRun:
     if ctx.ptRank == 0:
         pp(funcs)
 
-# If we have DVs that were supposed to be set after initialisation, we can set those now and re-run the model
-if len(ctx.args.postInitDVs) != 0:
-    print(f"Proc {ctx.globalRank}: Running again with postInitDVs", flush=True)
-    setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
-    if not ctx.settings.isDryRun:
-        funcs = runAnalysesRobustly(
-            ctx,
-            flightPointProb,
-            ctx.args.postInitDVs,
-            evalFuncs=coupling.dispFuncs,
-            writeSolution=ctx.settings.doWriteInitialSolution,
-        )
-        funcs = gatherMergedDict(ctx.globalComm, funcs)
-        funcs = coupling.objCon(funcs, True, None)
 
-if ctx.task == "polar":
-    alphaPert = 1.0
-    machPert = 0.02
-    numPoints = 11
-    alphas = ctx.localFlightPoint.alpha + np.linspace(-alphaPert, alphaPert, numPoints)
-    machs = ctx.localFlightPoint.mach + np.linspace(-machPert, machPert, numPoints)
+# --- Polar settings ---
+POLAR_ALPHA_PERTURBATION = 1.0  # degrees either side of the flight point's alpha
+POLAR_MACH_PERTURBATION = 0.02  # either side of the flight point's Mach number
+POLAR_NUM_POINTS = 11  # number of alpha values and of Mach values
+RAW_POLAR_DEFAULT_ALPHA_RANGE = 1.0  # degrees either side of the flight point's alpha
+
+
+def runPolar(ctx: RunContext, flightPointProb: om.Problem, coupling: PerformanceCoupling) -> None:
+    """Run the analysis over a grid of angles of attack and Mach numbers centred on the flight point's, writing the
+    outputs of each
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    coupling : PerformanceCoupling
+        The grad and disp funcs and the objCon function
+    """
+    alphas = ctx.localFlightPoint.alpha + np.linspace(
+        -POLAR_ALPHA_PERTURBATION, POLAR_ALPHA_PERTURBATION, POLAR_NUM_POINTS
+    )
+    machs = ctx.localFlightPoint.mach + np.linspace(-POLAR_MACH_PERTURBATION, POLAR_MACH_PERTURBATION, POLAR_NUM_POINTS)
     for alphaIndex, alpha in enumerate(alphas):
         for machIndex, mach in enumerate(machs):
             ctx.localFlightPoint.mach = mach
@@ -2243,14 +2243,26 @@ if ctx.task == "polar":
                 # Setting the Mach number updates the AeroProblem's other flow conditions, VLM reads them from inputs
                 for suffix, fpAttr, _ in VLM_FLOW_CONDITIONS:
                     x[f"dvs.{ctx.localFlightPoint.name}-{suffix}"] = getattr(ctx.localFlightPoint, fpAttr)
-            funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
+            runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
             writeOutputs(
                 flightPointProb,
                 outputDir=ctx.localOutputDir,
                 fileName=f"Mach-{machIndex}-Alpha-{alphaIndex}-Outputs",
             )
-if ctx.task == "rawPolar":
-    RAW_POLAR_DEFAULT_ALPHA_RANGE = 1.0  # degrees either side of the flight point's alpha
+
+
+def runRawPolar(ctx: RunContext, flightPointProb: om.Problem, coupling: PerformanceCoupling) -> None:
+    """Run the analysis over a range of angles of attack, writing the outputs of each
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    coupling : PerformanceCoupling
+        The grad and disp funcs and the objCon function
+    """
     alphaMin = (
         ctx.localFlightPoint.alpha - RAW_POLAR_DEFAULT_ALPHA_RANGE if ctx.args.alphaMin is None else ctx.args.alphaMin
     )
@@ -2261,28 +2273,45 @@ if ctx.task == "rawPolar":
     for alphaIndex, alpha in enumerate(alphas):
         # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
         x = {f"dvs.{ctx.localFlightPoint.name}_AOA": alpha}
-        funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
+        runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=coupling.dispFuncs, writeSolution=True)
         writeOutputs(
             flightPointProb,
             outputDir=ctx.localOutputDir,
             fileName=f"Alpha-{alphaIndex}-Outputs",
         )
 
-sol = ""
-if ctx.task in ["check", "opt", "trim", "derivCheck"]:
-    # ==============================================================================
-    # Setup optimization problem
-    # ==============================================================================
+
+# Tasks that create the optimisation problem
+OPT_PROB_TASKS = ["check", "opt", "trim", "derivCheck"]
+
+
+def buildOptProb(
+    ctx: RunContext, flightPointProb: om.Problem, performanceProb: om.Problem, coupling: PerformanceCoupling
+) -> Optimization:
+    """Setup optimization problem
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    performanceProb : om.Problem
+        The performance problem
+    coupling : PerformanceCoupling
+        The grad and disp funcs and the objCon function
+
+    Returns
+    -------
+    Optimization
+        The optimisation problem, also given to multipoint
+    """
     optProb = Optimization("Aero-Structural Optimization", ctx.multiPoint.obj)
 
-    # ==============================================================================
-    # Define design variables
-    # ==============================================================================
+    # --- Define design variables ---
     addDesignVarsFromOpenMDAO(optProb, flightPointProb)
 
-    # ==============================================================================
-    # Define constraints
-    # ==============================================================================
+    # --- Define constraints ---
     # Add all constraints from the flight point model, addConstraintFromOpenMDAO will automatically figure out which DVs
     # each constraint depends on using the OpenMDAO model. The performance output constraints are only there for adjoint
     # caching, so they're skipped.
@@ -2333,9 +2362,7 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
 
         addConstraintFromOpenMDAO(con, optProb, performanceProb, wrt=relevantDVs)
 
-    # ==============================================================================
-    # Define objective
-    # ==============================================================================
+    # --- Define objective ---
     # Let's hope we don't have more than one objective defined
     objectives = flightPointProb.model.get_objectives()
     objectives.update(performanceProb.model.get_objectives())
@@ -2361,9 +2388,24 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
                 print(f"Adding {func} as an objCon input function", flush=True)
             ctx.multiPoint.addConsAsObjConInputs(func)
 
-    # ==============================================================================
-    # Setup optimiser and driver
-    # ==============================================================================
+    return optProb
+
+
+def runOptimiser(ctx: RunContext, optProb: Optimization):
+    """Setup optimiser and driver, and run the optimisation (`opt`) or find a trimmed point (`trim`)
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    optProb : Optimization
+        The optimisation problem
+
+    Returns
+    -------
+    Solution
+        The optimiser's solution
+    """
     optimiserMap = {
         "paroptsl1": "ParOpt",
         "paroptfilter": "ParOpt",
@@ -2418,9 +2460,7 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
 
     optimiser = OPT(optimiserMap[ctx.args.optimiser], options=optimiserOptions)
 
-    # ==============================================================================
-    # Run the optimisation
-    # ==============================================================================
+    # --- Run the optimisation ---
     if ctx.task == "trim":
         sol = optimiser(
             optProb,
@@ -2455,162 +2495,228 @@ if ctx.task in ["check", "opt", "trim", "derivCheck"]:
                 with open(os.path.join(ctx.outputDir, "SNOPTRestart.pkl"), "wb") as f:
                     dill.dump(restartDict, f)
 
-    elif ctx.task == "derivCheck":
-        # Check derivatives of all objectives and constraints with respect to all design variables
-        obj = ctx.multiPoint.obj
-        sens = ctx.multiPoint.sens
-        origDVs = optProb.getDVs()
-        origFuncs, _ = obj(origDVs)
-        analyticSens, _ = sens(origDVs, origFuncs)
+    return sol
 
-        # Exclude the large outputs (geometric and panel length constraints) from the derivative check, I'm confident they're accurate
-        outputsToTest = [func for func in origFuncs if np.size(origFuncs[func]) < 10]
 
-        # FD settings
-        stepSize = 1e-4
-        directionalThreshold = 3  # If a DV has a length greater than this we will test the directional derivative only
+# FD settings for the derivative check
+DERIV_CHECK_STEP_SIZE = 1e-4
+# If a DV has a length greater than this we will test the directional derivative only
+DERIV_CHECK_DIRECTIONAL_THRESHOLD = 3
 
-        fdSens = {}
+
+def checkMultipointDerivs(ctx: RunContext, optProb: Optimization) -> None:
+    """Check derivatives of all objectives and constraints with respect to all design variables against finite
+    differences, and write the errors to `DerivCheck.pkl`
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    optProb : Optimization
+        The optimisation problem
+    """
+    obj = ctx.multiPoint.obj
+    sens = ctx.multiPoint.sens
+    origDVs = optProb.getDVs()
+    origFuncs, _ = obj(origDVs)
+    analyticSens, _ = sens(origDVs, origFuncs)
+
+    # Exclude the large outputs (geometric and panel length constraints) from the derivative check, I'm confident they're accurate
+    outputsToTest = [func for func in origFuncs if np.size(origFuncs[func]) < 10]
+
+    fdSens = {}
+    for func in outputsToTest:
+        fdSens[func] = {}
+
+    dvScales = {}
+    for dvName, dvs in optProb.variables.items():
+        numDV = len(dvs)
+        dvScales[dvName] = np.ones(numDV)
+        for ii in range(numDV):
+            if dvs[ii].scale is not None:
+                dvScales[dvName][ii] = dvs[ii].scale
+
+        testDirectional = numDV > DERIV_CHECK_DIRECTIONAL_THRESHOLD
+
         for func in outputsToTest:
-            fdSens[func] = {}
+            outputSize = np.size(origFuncs[func])
+            inpSize = 1 if testDirectional else numDV
+            fdSens[func][dvName] = np.zeros((outputSize, inpSize))
 
-        dvScales = {}
-        for dvName, dvs in optProb.variables.items():
-            numDV = len(dvs)
-            dvScales[dvName] = np.ones(numDV)
-            for ii in range(numDV):
-                if dvs[ii].scale is not None:
-                    dvScales[dvName][ii] = dvs[ii].scale
+        if testDirectional:
+            if ctx.ptRank == 0:
+                print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
+            pertDVs = copy.deepcopy(origDVs)
+            dvPert = DERIV_CHECK_STEP_SIZE / dvScales[dvName]
+            pertDVs[dvName] += dvPert
 
-            testDirectional = numDV > directionalThreshold
+            pertFuncs, _ = obj(pertDVs)
+            pertDVs[dvName] -= 2 * dvPert
+            pertFuncs2, _ = obj(pertDVs)
 
             for func in outputsToTest:
-                outputSize = np.size(origFuncs[func])
-                inpSize = 1 if testDirectional else numDV
-                fdSens[func][dvName] = np.zeros((outputSize, inpSize))
+                fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * DERIV_CHECK_STEP_SIZE)
 
-            if testDirectional:
+        else:
+            for ii in range(numDV):
                 if ctx.ptRank == 0:
-                    print(f"Testing directional derivative w.r.t {dvName} (size {numDV})", flush=True)
+                    print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
                 pertDVs = copy.deepcopy(origDVs)
-                dvPert = stepSize / dvScales[dvName]
-                pertDVs[dvName] += dvPert
+                dvPert = DERIV_CHECK_STEP_SIZE / dvScales[dvName][ii]
+                pertDVs[dvName][ii] += dvPert
 
                 pertFuncs, _ = obj(pertDVs)
-                pertDVs[dvName] -= 2 * dvPert
+                pertDVs[dvName][ii] -= 2 * dvPert
                 pertFuncs2, _ = obj(pertDVs)
 
                 for func in outputsToTest:
-                    fdSens[func][dvName][:, 0] = (pertFuncs[func] - pertFuncs2[func]) / (2 * stepSize)
+                    fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
 
-            else:
-                for ii in range(numDV):
-                    if ctx.ptRank == 0:
-                        print(f"Testing derivative w.r.t {dvName}[{ii}]", flush=True)
-                    pertDVs = copy.deepcopy(origDVs)
-                    dvPert = stepSize / dvScales[dvName][ii]
-                    pertDVs[dvName][ii] += dvPert
+    derivCheckData = {}
+    for func in outputsToTest:
+        derivCheckData[func] = {}
+        if ctx.ptRank == 0:
+            print(f"\n\nDerivative check for function {func}:", flush=True)
 
-                    pertFuncs, _ = obj(pertDVs)
-                    pertDVs[dvName][ii] -= 2 * dvPert
-                    pertFuncs2, _ = obj(pertDVs)
-
-                    for func in outputsToTest:
-                        fdSens[func][dvName][:, ii] = (pertFuncs[func] - pertFuncs2[func]) / (2 * dvPert)
-
-        derivCheckData = {}
-        for func in outputsToTest:
-            derivCheckData[func] = {}
+        if func not in analyticSens:
             if ctx.ptRank == 0:
-                print(f"\n\nDerivative check for function {func}:", flush=True)
+                print(f"  No analytic derivatives found for {func}", flush=True)
+            continue
+        for dvName in fdSens[func]:
+            if ctx.ptRank == 0:
+                print(f"  DV: {dvName}", flush=True)
 
-            if func not in analyticSens:
+            fd = fdSens[func][dvName]
+            if dvName in analyticSens[func]:
+                analytic = analyticSens[func][dvName]
+            else:
                 if ctx.ptRank == 0:
-                    print(f"  No analytic derivatives found for {func}", flush=True)
+                    print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
                 continue
-            for dvName in fdSens[func]:
-                if ctx.ptRank == 0:
-                    print(f"  DV: {dvName}", flush=True)
+            derivCheckData[func][dvName] = {
+                "analytic": analytic,
+                "fd": fd,
+            }
+            if analytic.shape != fd.shape:
+                analyticSensProd = analytic @ (1 / dvScales[dvName])
+                derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
+                absError = np.abs(analyticSensProd - fd.reshape(analyticSensProd.shape))
+                relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
+            else:
+                absError = np.abs(analytic - fd)
+                relError = absError / (np.abs(fd) + 1e-16)
+            derivCheckData[func][dvName]["absError"] = absError
+            derivCheckData[func][dvName]["relError"] = relError
 
-                fd = fdSens[func][dvName]
-                if dvName in analyticSens[func]:
-                    analytic = analyticSens[func][dvName]
-                else:
-                    if ctx.ptRank == 0:
-                        print(f"    No analytic derivative found w.r.t {dvName}", flush=True)
-                    continue
-                derivCheckData[func][dvName] = {
-                    "analytic": analytic,
-                    "fd": fd,
-                }
-                if analytic.shape != fd.shape:
-                    analyticSensProd = analytic @ (1 / dvScales[dvName])
-                    derivCheckData[func][dvName]["analyticProd"] = analyticSensProd
-                    absError = np.abs(analyticSensProd - fd.reshape(analyticSensProd.shape))
-                    relError = absError / (np.abs(fd.reshape(analyticSensProd.shape)) + 1e-16)
-                else:
-                    absError = np.abs(analytic - fd)
-                    relError = absError / (np.abs(fd) + 1e-16)
-                derivCheckData[func][dvName]["absError"] = absError
-                derivCheckData[func][dvName]["relError"] = relError
+            if ctx.ptRank == 0:
+                for key, val in derivCheckData[func][dvName].items():
+                    print(f"    {key:>25}: {val}", flush=True)
 
-                if ctx.ptRank == 0:
-                    for key, val in derivCheckData[func][dvName].items():
-                        print(f"    {key:>25}: {val}", flush=True)
-
-        if ctx.globalRank == 0:
-            outFileName = os.path.join(ctx.outputDir, "DerivCheck.pkl")
-            with open(outFileName, "wb") as f:
-                dill.dump(derivCheckData, f, protocol=-1)
+    if ctx.globalRank == 0:
+        outFileName = os.path.join(ctx.outputDir, "DerivCheck.pkl")
+        with open(outFileName, "wb") as f:
+            dill.dump(derivCheckData, f, protocol=-1)
 
 
-# --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a pickle file ---
-outputs = flightPointProb.model.list_outputs(
-    return_format="dict",
-    print_arrays=False,
-    excludes=["*adflow_vol_coords", "*adflow_states"],
-)
-outputData = {}
-for output in outputs:
-    try:
-        data = flightPointProb.get_val(output)
-        if np.size(data) < 10000:
-            outputData[output] = data
-    except TypeError:
-        pass
+def writeFinalOutputs(ctx: RunContext, flightPointProb: om.Problem, performanceProb: om.Problem, sol) -> None:
+    """Write the outputs to `Outputs.pkl` and the post-run N2 files, and print the optimiser's solution
 
-# Add wingbox tip displacement to the outputs
-tipZDisp, tipTwist = getTipDisplacement(flightPointProb, ctx.localFlightPoint.name)
-outputData[f"{ctx.localFlightPoint.name}-TipZDisp"] = tipZDisp
-outputData[f"{ctx.localFlightPoint.name}-TipTwist"] = tipTwist
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    performanceProb : om.Problem
+        The performance problem
+    sol : Solution or str
+        The optimiser's solution, or "" if the task didn't run an optimiser
+    """
+    # --- Write out the DVs and outputs that aren't too long (e.g not the ADflow state vector) in unscaled form to a
+    # pickle file ---
+    outputs = flightPointProb.model.list_outputs(
+        return_format="dict",
+        print_arrays=False,
+        excludes=["*adflow_vol_coords", "*adflow_states"],
+    )
+    outputData = {}
+    for output in outputs:
+        try:
+            data = flightPointProb.get_val(output)
+            if np.size(data) < 10000:
+                outputData[output] = data
+        except TypeError:
+            pass
 
-# Accumulate the data from all flight points on the root proc
-outputData = gatherMergedDict(ctx.globalComm, outputData, doBroadcast=False)
+    # Add wingbox tip displacement to the outputs
+    tipZDisp, tipTwist = getTipDisplacement(flightPointProb, ctx.localFlightPoint.name)
+    outputData[f"{ctx.localFlightPoint.name}-TipZDisp"] = tipZDisp
+    outputData[f"{ctx.localFlightPoint.name}-TipTwist"] = tipTwist
 
-# Add outputs from the performance problem
-performanceOutputs = performanceProb.model.list_outputs(return_format="dict", print_arrays=False)
+    # Accumulate the data from all flight points on the root proc
+    outputData = gatherMergedDict(ctx.globalComm, outputData, doBroadcast=False)
 
-if ctx.globalRank == 0:
-    outputData.update(performanceOutputs)
+    # Add outputs from the performance problem
+    performanceOutputs = performanceProb.model.list_outputs(return_format="dict", print_arrays=False)
 
-if MPI.COMM_WORLD.rank == 0:
-    outFileName = os.path.join(ctx.outputDir, "Outputs.pkl")
-    with open(outFileName, "wb") as f:
-        dill.dump(outputData, f, protocol=-1)
+    if ctx.globalRank == 0:
+        outputData.update(performanceOutputs)
 
-om.n2(
-    flightPointProb,
-    show_browser=False,
-    outfile=os.path.join(ctx.localOutputDir, "AeroStruct-N2-Post-Run.html"),
-)
-om.n2(
-    performanceProb,
-    show_browser=False,
-    outfile=os.path.join(ctx.outputDir, "Performance-N2-Post-Run.html"),
-)
+    if MPI.COMM_WORLD.rank == 0:
+        outFileName = os.path.join(ctx.outputDir, "Outputs.pkl")
+        with open(outFileName, "wb") as f:
+            dill.dump(outputData, f, protocol=-1)
 
-if ctx.globalRank == 0:
-    print(sol)
+    om.n2(
+        flightPointProb,
+        show_browser=False,
+        outfile=os.path.join(ctx.localOutputDir, "AeroStruct-N2-Post-Run.html"),
+    )
+    om.n2(
+        performanceProb,
+        show_browser=False,
+        outfile=os.path.join(ctx.outputDir, "Performance-N2-Post-Run.html"),
+    )
+
+    if ctx.globalRank == 0:
+        print(sol)
+
+
+ctx = buildRunContext(parser.parse_args(), MPI.COMM_WORLD)
+
+if ctx.args.profile:
+    import cProfile
+
+    pr = cProfile.Profile()
+    pr.enable()
+
+prepareOutputs(ctx)
+flightPointProb, performanceProb = buildProblems(ctx)
+coupling = setupPerformanceCoupling(ctx, flightPointProb, performanceProb)
+
+if not ctx.settings.isDryRun:
+    runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.initDVs)
+
+# DVs that shouldn't be used to initialise the model are set after the initial run, and the model is run again with them
+if len(ctx.args.postInitDVs) != 0:
+    setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
+    if not ctx.settings.isDryRun:
+        print(f"Proc {ctx.globalRank}: Running again with postInitDVs", flush=True)
+        runInitialAnalyses(ctx, flightPointProb, coupling, ctx.args.postInitDVs)
+
+sol = ""
+if ctx.task == "polar":
+    runPolar(ctx, flightPointProb, coupling)
+elif ctx.task == "rawPolar":
+    runRawPolar(ctx, flightPointProb, coupling)
+elif ctx.task in OPT_PROB_TASKS:
+    optProb = buildOptProb(ctx, flightPointProb, performanceProb, coupling)
+    if ctx.task in ["opt", "trim"]:
+        sol = runOptimiser(ctx, optProb)
+    elif ctx.task == "derivCheck":
+        checkMultipointDerivs(ctx, optProb)
+
+writeFinalOutputs(ctx, flightPointProb, performanceProb, sol)
 
 if ctx.args.profile:
     pr.disable()
