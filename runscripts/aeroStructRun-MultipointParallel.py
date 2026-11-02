@@ -714,6 +714,7 @@ if ctx.usingVLM:
     aeroBuilder = OASBuilder(
         [surf_dict], options={"compressible": True, "output_dir": ctx.localAeroOutputDir, "write_solution": True}
     )
+    aeroOptions = None
 else:
     aeroOptions = getADflowOptions(ctx.aeroMeshFile, ctx.localAeroOutputDir, aerostructural=True)
     if ctx.aeroLevel == 3:
@@ -772,9 +773,45 @@ ldxferBuilder = MeldBuilder(
 )
 
 
+# --- Spanwise lift distribution and slice file output for the ADflow solvers ---
+LIFT_DISTRIBUTION_NUM_POINTS = 100
+NUM_SLICES = 51
+SLICE_ROOT_POSITION = 1e-5
+SLICE_TIP_SPAN_FRACTION = 0.99
+
+
+def addAeroOutputs(solver) -> None:
+    """Add the spanwise lift distribution and the spanwise slices to an ADflow solver's output files
+
+    Parameters
+    ----------
+    solver : adflow.ADFLOW
+        ADflow solver to add the outputs to
+    """
+    solver.addLiftDistribution(LIFT_DISTRIBUTION_NUM_POINTS, INDEX_STRINGS[SPAN_INDEX])
+    slicePositions = np.linspace(SLICE_ROOT_POSITION, WING_SEMISPAN * SLICE_TIP_SPAN_FRACTION, NUM_SLICES)
+    solver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+
+
 # Now we can create the MPhys model for each flight point
 class AnalysisPoint(Multipoint):
+    def initialize(self):
+        self.options.declare("ctx", types=RunContext, desc="Run configuration")
+        self.options.declare("aeroBuilder", desc="MPhys builder for this flight point's aero solver (ADflow or VLM)")
+        self.options.declare("structBuilder", desc="MPhys builder for the TACS structural model")
+        self.options.declare("ldxferBuilder", desc="MPhys builder for the MELD load and displacement transfer")
+        self.options.declare(
+            "aeroOptions",
+            default=None,
+            types=(dict, type(None)),
+            desc="ADflow options, used to create the dummy aero solver, None when using VLM",
+        )
+
     def setup(self):
+        ctx = self.options["ctx"]
+        aeroBuilder = self.options["aeroBuilder"]
+        structBuilder = self.options["structBuilder"]
+        ldxferBuilder = self.options["ldxferBuilder"]
         self.fpName = ctx.localFlightPoint.name
 
         builders = {}
@@ -799,9 +836,7 @@ class AnalysisPoint(Multipoint):
 
             # Add lift distribution and slice file output
             if not ctx.args.noFiles and self.aeroSolver is not None:
-                self.aeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
-                slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 51)
-                self.aeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+                addAeroOutputs(self.aeroSolver)
 
         # ==============================================================================
         # TACS Setup
@@ -1095,6 +1130,8 @@ class AnalysisPoint(Multipoint):
                     self.connect("avgToC", "takeoff.ac|geom|wing|toverc")
 
     def configure(self):
+        ctx = self.options["ctx"]
+        aeroOptions = self.options["aeroOptions"]
         geometryComp = self.geometry
         dvComp = self.dvs
 
@@ -1213,9 +1250,7 @@ class AnalysisPoint(Multipoint):
                     self.dummyAeroSolver.setDVGeo(geometryComp.nom_getDVGeo())
                     mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
                     self.dummyAeroSolver.setMesh(mesh)
-                    self.dummyAeroSolver.addLiftDistribution(100, INDEX_STRINGS[SPAN_INDEX])
-                    slicePositions = np.linspace(1e-5, WING_SEMISPAN * 0.99, 51)
-                    self.dummyAeroSolver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+                    addAeroOutputs(self.dummyAeroSolver)
                     # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
                     # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
                     # steps and doesn't actually waste any time solving.
@@ -1224,7 +1259,13 @@ class AnalysisPoint(Multipoint):
 
 # --- Now actually create the OpenMDAO model for each point ---
 flightPointProb = om.Problem(reports=None, comm=ctx.ptComm, work_dir=ctx.localOutputDir)
-flightPointProb.model = AnalysisPoint()
+flightPointProb.model = AnalysisPoint(
+    ctx=ctx,
+    aeroBuilder=aeroBuilder,
+    structBuilder=structBuilder,
+    ldxferBuilder=ldxferBuilder,
+    aeroOptions=aeroOptions,
+)
 
 # --- Finally create the aircraft performance OpenMDAO model ---
 performanceProb = om.Problem(reports=None, comm=ctx.globalComm, work_dir=ctx.outputDir)
