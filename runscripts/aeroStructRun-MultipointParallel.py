@@ -1378,7 +1378,9 @@ def writeAeroStructSolution(ctx: RunContext, flightPointProb: om.Problem) -> Non
             wimpressCalc.writeTecplot(os.path.join(ctx.geoOutputDir, f"WimpressCalc_{iterNum:03d}.dat"))
 
 
-def runAeroStructAnalyses(ctx: RunContext, flightPointProb: om.Problem, x=None, evalFuncs=None, writeSolution=False):
+def runAeroStructAnalyses(
+    ctx: RunContext, flightPointProb: om.Problem, x=None, evalFuncs=None, writeSolution=False
+) -> dict:
     """Run aerostructural analyses for each flight point
 
     Parameters
@@ -1442,7 +1444,7 @@ def computeSens(
     gradFuncs=None,
     dispFuncs=None,
     writeSolution=False,
-):
+) -> dict:
     """Compute sensitivities through the coupled aerostructural analyses
 
     Parameters
@@ -2391,7 +2393,7 @@ def buildOptProb(
     return optProb
 
 
-def runOptimiser(ctx: RunContext, optProb: Optimization):
+def runOptimiser(ctx: RunContext, optProb: Optimization) -> object:
     """Setup optimiser and driver, and run the optimisation (`opt`) or find a trimmed point (`trim`)
 
     Parameters
