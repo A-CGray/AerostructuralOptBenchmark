@@ -1503,8 +1503,8 @@ if ctx.ptRank == 0:
     printBanner({"Performance inputs": performanceInputs})
 
 
-# Need to call final_setup so that sizes of inputs and outputs are figured out correctly, otherwise calling
-# `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
+# Need to call final_setup so that sizes of inputs and outputs that are shaped by connection are figured out, otherwise
+# calling `list_outputs` can fail (see https://github.com/OpenMDAO/OpenMDAO/issues/3560 for details)
 flightPointProb.final_setup()
 performanceProb.final_setup()
 
