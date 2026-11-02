@@ -812,7 +812,7 @@ class AnalysisPoint(Multipoint):
             "performanceOutputNames",
             types=set,
             desc="Names of the outputs the performance model uses, any this point creates are declared as unbounded "
-            "aliased constraints",
+            "aliased constraints, unless they are already a design variable",
         )
 
     def setup(self):
@@ -1183,8 +1183,9 @@ class AnalysisPoint(Multipoint):
         declared responses depend on others. The flight point outputs that feed the performance model (masses, fuel
         burn, lift) are such responses, and caching their adjoints saves most of the cruise adjoint solves, so we
         declare them as unbounded constraints, aliased with ``PERFORMANCE_OUTPUT_ALIAS_PREFIX``. These constraints are
-        skipped when building gradFuncs and the pyOptSparse problem. The caller leaves design variables and objectives
-        out of the ``performanceOutputNames`` option, because they are already declared.
+        skipped when building gradFuncs and the pyOptSparse problem. Outputs that are already declared aren't declared
+        again: the script leaves its objective out of the ``performanceOutputNames`` option, and the caller doesn't call
+        this for an output it has just declared as a design variable (the fuel mass with ``--useFuelMassDVs``).
 
         Parameters
         ----------
