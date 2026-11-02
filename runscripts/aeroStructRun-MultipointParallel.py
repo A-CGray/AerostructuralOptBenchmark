@@ -1089,17 +1089,18 @@ class AnalysisPoint(Multipoint):
                 aircraftSpecs=ctx.aircraftSpecs,
                 flightPoint=ctx.localFlightPoint,
             )
+            fuelBurnOutputs = [
+                "totalFuelBurn",
+                "cruiseStartMass",
+                "takeoffMass",
+            ]
             self.add_subsystem(
                 "fuelBurn",
                 fuelBurnGroup,
                 promotes_inputs=["landingGrossMass"],
-                promotes_outputs=[
-                    "totalFuelBurn",
-                    "cruiseStartMass",
-                    "takeoffMass",
-                ],
+                promotes_outputs=fuelBurnOutputs,
             )
-            for outputName in ["totalFuelBurn", "cruiseStartMass", "takeoffMass"]:
+            for outputName in fuelBurnOutputs:
                 self._declarePerformanceOutput(outputName)
             for force in [
                 "lift",
