@@ -833,130 +833,17 @@ class AnalysisPoint(Multipoint):
 
     def configure(self):
         ctx = self.options["ctx"]
-        aeroOptions = self.options["aeroOptions"]
-        geometryComp = self.geometry
-        dvComp = self.dvs
-
         if ctx.isAeroStruct:
-            fp = ctx.localFlightPoint
-            scenario = getattr(self, self.fpName)
-            # Add this point's angle of angle of attack as a DV
-            alphaDVName = f"{fp.name}_AOA"
-            dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
-            self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=0.1)
-            if ctx.usingVLM:
-                # OpenAerostruct gets flight conditions from inputs instead of the aero problem
-                self.connect(alphaDVName, f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}")
-                for suffix, fpAttr, units in VLM_FLOW_CONDITIONS:
-                    dvComp.add_output(f"{fp.name}-{suffix}", val=getattr(fp, fpAttr), units=units)
-                    self.connect(f"{fp.name}-{suffix}", f"{fp.name}.{suffix}")
-            else:
-                # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
-                fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
-                scenario.coupling.aero.mphys_set_ap(fp)
-                scenario.aero_post.mphys_set_ap(fp)
-                self.connect(
-                    alphaDVName,
-                    [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
-                )
-
-        # Setup the geometric DVs and constraints, we only need to compute the geometric constraints (LE radius,
-        # thickness, area etc) on one proc set
-        geometryComp.nom_setConstraintSurface(getTriangulatedSurface())
-        setupDVGeo(
-            ctx.args,
-            self,
-            geometryComp,
-            dvComp,
-            dvScaleFactor=ctx.args.geoScalingFactor,
-            geoCompName="geometry",
-            addGeoDVs=ctx.args.addGeoDVs,
-            addGeoConstraints=ctx.ptID == 0 and ctx.settings.doAddGeoConstraints,
-            computeRibBayVolumes=True,
-            computeToC=ctx.isCruisePoint,
-        )
-
-        DVCon = self.geometry.nom_getDVCon()
-        if ctx.globalRank == 0:
-            DVCon.writeTecplot(os.path.join(ctx.geoOutputDir, "DVConstraints.dat"))
-            DVCon.writeSurfaceTecplot(os.path.join(ctx.geoOutputDir, "DVConstraintsSurface.dat"))
-            DVCon.writeSurfaceSTL(os.path.join(ctx.geoOutputDir, "DVConstraintsSurface.stl"))
-
-        # Connect rib bay volumes to the fuel distribution group
-        for ii in range(self.numRibBays):
-            self.connect(f"geometry.RibBay-Volume_{ii}", f"RibBay-Volume_{ii}")
-
-        if ctx.isAeroStruct:
-            # Add the wimpress coordinates as a pointset to the geometry component and connect them to the wimpress comp
-            wimpressComp = self.PlanformValues
-            wimpressCoordName = "x_wimpress"
-            geometryComp.nom_addPointSet(
-                wimpressComp.wimpressCalc.getCoords(packed=True),
-                ptName=wimpressCoordName,
-                distributed=False,
-            )
-            self.connect(f"geometry.{wimpressCoordName}", "PlanformValues.x_wimpress")
+            self._configureFlowConditions()
+        self._configureGeometry()
 
         # Only add TACS constraints on the first proc set and if we're actually doing an optimisation
         if ctx.ptID == 0 and ctx.settings.doAddTacsConstraints:
-            firstScenario = getattr(self, self.fpName)
-            add_tacs_constraints(firstScenario)
+            add_tacs_constraints(getattr(self, self.fpName))
 
         if ctx.isAeroStruct:
-            # ==============================================================================
-            # Play with the coupled solver settings
-            # ==============================================================================
-            scenario = getattr(self, self.fpName)
-            scenario.coupling.nonlinear_solver = om.NonlinearBlockGS(
-                maxiter=100,
-                iprint=2,
-                atol=1e-4 * ctx.args.tolFactor,
-                rtol=1e-8 * ctx.args.tolFactor,
-                use_aitken=not ctx.args.noAitken,
-                aitken_initial_factor=ctx.args.aitkenInitFactor,
-                aitken_max_factor=1.2,
-                # reraise_child_analysiserror=True,
-                # use_apply_nonlinear=True, This doesn't work
-                restart_from_successful=True,
-                err_on_non_converge=True,
-            )
-            scenario.coupling.linear_solver = om.PETScKrylov(
-                atol=1e-4 * ctx.args.tolFactor,
-                rtol=1e-8 * ctx.args.tolFactor,
-                maxiter=50,
-                iprint=2,
-                rhs_checking={
-                    "max_cache_entries": 10,
-                    "check_zero": True,
-                    "collect_stats": True,
-                    "auto": True,
-                    "verbose": ctx.ptRank == 0,
-                    "atol": 1e-14,
-                    "rtol": 1e-14,
-                },
-            )
-            scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
-
-        # ==============================================================================
-        # Setup dummy aero solver
-        # ==============================================================================
-        # In order to write out the jig shape of the OML and its twist distribution, I need to setup a dummy ADflow
-        # instance that will recieve surface coordinates directly from the DVGeo without structural displacements. I
-        # will then write solution files from this solver without every actually running it
-        self.dummyAeroSolver = None
-        if ctx.isAeroStruct:
-            if not ctx.args.noFiles and self.aeroSolver is not None:
-                if ctx.ptID == 0:
-                    self.dummyAeroSolver = ADFLOW(options=aeroOptions, comm=self.comm)
-                    self.dummyAeroSolver.setAeroProblem(ctx.localFlightPoint)
-                    self.dummyAeroSolver.setDVGeo(geometryComp.nom_getDVGeo())
-                    mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
-                    self.dummyAeroSolver.setMesh(mesh)
-                    addAeroOutputs(self.dummyAeroSolver)
-                    # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
-                    # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
-                    # steps and doesn't actually waste any time solving.
-                    self.dummyAeroSolver.setOption("nCycles", 0)
+            self._configureCoupledSolvers()
+        self._addDummyAeroSolver()
 
     def _addAeroDiscipline(self, builders: dict, disciplineVariables: dict) -> None:
         """Set up the aero discipline"""
@@ -1272,6 +1159,135 @@ class AnalysisPoint(Multipoint):
                 self.connect("PlanformValues.QCSweep", "takeoff.ac|geom|wing|c4sweep")
                 self.connect("PlanformValues.trapTaper", "takeoff.ac|geom|wing|taper")
                 self.connect("avgToC", "takeoff.ac|geom|wing|toverc")
+
+    def _configureFlowConditions(self) -> None:
+        """Add the angle of attack DV and give the aero solver its flow conditions"""
+        ctx = self.options["ctx"]
+        dvComp = self.dvs
+
+        fp = ctx.localFlightPoint
+        scenario = getattr(self, self.fpName)
+        # Add this point's angle of angle of attack as a DV
+        alphaDVName = f"{fp.name}_AOA"
+        dvComp.add_output(alphaDVName, val=fp.alpha, units="deg")
+        self.add_design_var(alphaDVName, lower=-20.0, upper=20.0, scaler=0.1)
+        if ctx.usingVLM:
+            # OpenAerostruct gets flight conditions from inputs instead of the aero problem
+            self.connect(alphaDVName, f"{fp.name}.{MPhysVariables.Aerodynamics.FlowConditions.ANGLE_OF_ATTACK}")
+            for suffix, fpAttr, units in VLM_FLOW_CONDITIONS:
+                dvComp.add_output(f"{fp.name}-{suffix}", val=getattr(fp, fpAttr), units=units)
+                self.connect(f"{fp.name}-{suffix}", f"{fp.name}.{suffix}")
+        else:
+            # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
+            fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")
+            scenario.coupling.aero.mphys_set_ap(fp)
+            scenario.aero_post.mphys_set_ap(fp)
+            self.connect(
+                alphaDVName,
+                [f"{self.fpName}.coupling.aero.aoa", f"{self.fpName}.aero_post.aoa"],
+            )
+
+    def _configureGeometry(self) -> None:
+        """Set up the geometric DVs and constraints, and connect the geometry to the fuel mass and planform groups"""
+        ctx = self.options["ctx"]
+        geometryComp = self.geometry
+        dvComp = self.dvs
+
+        # Setup the geometric DVs and constraints, we only need to compute the geometric constraints (LE radius,
+        # thickness, area etc) on one proc set
+        geometryComp.nom_setConstraintSurface(getTriangulatedSurface())
+        setupDVGeo(
+            ctx.args,
+            self,
+            geometryComp,
+            dvComp,
+            dvScaleFactor=ctx.args.geoScalingFactor,
+            geoCompName="geometry",
+            addGeoDVs=ctx.args.addGeoDVs,
+            addGeoConstraints=ctx.ptID == 0 and ctx.settings.doAddGeoConstraints,
+            computeRibBayVolumes=True,
+            computeToC=ctx.isCruisePoint,
+        )
+
+        DVCon = self.geometry.nom_getDVCon()
+        if ctx.globalRank == 0:
+            DVCon.writeTecplot(os.path.join(ctx.geoOutputDir, "DVConstraints.dat"))
+            DVCon.writeSurfaceTecplot(os.path.join(ctx.geoOutputDir, "DVConstraintsSurface.dat"))
+            DVCon.writeSurfaceSTL(os.path.join(ctx.geoOutputDir, "DVConstraintsSurface.stl"))
+
+        # Connect rib bay volumes to the fuel distribution group
+        for ii in range(self.numRibBays):
+            self.connect(f"geometry.RibBay-Volume_{ii}", f"RibBay-Volume_{ii}")
+
+        if ctx.isAeroStruct:
+            # Add the wimpress coordinates as a pointset to the geometry component and connect them to the wimpress comp
+            wimpressComp = self.PlanformValues
+            wimpressCoordName = "x_wimpress"
+            geometryComp.nom_addPointSet(
+                wimpressComp.wimpressCalc.getCoords(packed=True),
+                ptName=wimpressCoordName,
+                distributed=False,
+            )
+            self.connect(f"geometry.{wimpressCoordName}", "PlanformValues.x_wimpress")
+
+    def _configureCoupledSolvers(self) -> None:
+        """Set up the coupled nonlinear and linear solvers"""
+        ctx = self.options["ctx"]
+
+        scenario = getattr(self, self.fpName)
+        scenario.coupling.nonlinear_solver = om.NonlinearBlockGS(
+            maxiter=100,
+            iprint=2,
+            atol=1e-4 * ctx.args.tolFactor,
+            rtol=1e-8 * ctx.args.tolFactor,
+            use_aitken=not ctx.args.noAitken,
+            aitken_initial_factor=ctx.args.aitkenInitFactor,
+            aitken_max_factor=1.2,
+            # reraise_child_analysiserror=True,
+            # use_apply_nonlinear=True, This doesn't work
+            restart_from_successful=True,
+            err_on_non_converge=True,
+        )
+        scenario.coupling.linear_solver = om.PETScKrylov(
+            atol=1e-4 * ctx.args.tolFactor,
+            rtol=1e-8 * ctx.args.tolFactor,
+            maxiter=50,
+            iprint=2,
+            rhs_checking={
+                "max_cache_entries": 10,
+                "check_zero": True,
+                "collect_stats": True,
+                "auto": True,
+                "verbose": ctx.ptRank == 0,
+                "atol": 1e-14,
+                "rtol": 1e-14,
+            },
+        )
+        scenario.coupling.linear_solver.precon = om.LinearBlockGS(maxiter=1, iprint=-2, use_aitken=False, rtol=1e-1)
+
+    def _addDummyAeroSolver(self) -> None:
+        """Set up the dummy aero solver"""
+        ctx = self.options["ctx"]
+        aeroOptions = self.options["aeroOptions"]
+        geometryComp = self.geometry
+
+        # In order to write out the jig shape of the OML and its twist distribution, I need to setup a dummy ADflow
+        # instance that will recieve surface coordinates directly from the DVGeo without structural displacements. I
+        # will then write solution files from this solver without every actually running it
+        self.dummyAeroSolver = None
+        if ctx.isAeroStruct:
+            if not ctx.args.noFiles and self.aeroSolver is not None:
+                if ctx.ptID == 0:
+                    self.dummyAeroSolver = ADFLOW(options=aeroOptions, comm=self.comm)
+                    self.dummyAeroSolver.setAeroProblem(ctx.localFlightPoint)
+                    self.dummyAeroSolver.setDVGeo(geometryComp.nom_getDVGeo())
+                    mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
+                    self.dummyAeroSolver.setMesh(mesh)
+                    addAeroOutputs(self.dummyAeroSolver)
+                    # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
+                    # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
+                    # steps and doesn't actually waste any time solving.
+                    self.dummyAeroSolver.setOption("nCycles", 0)
 
 
 # --- Now actually create the OpenMDAO model for each point ---
