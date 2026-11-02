@@ -1652,7 +1652,16 @@ if ctx.ptRank == 0:
 # ==============================================================================
 # Define functions to be used in the optimisation/analysis
 # ==============================================================================
-def writeAeroStructSolution():
+def writeAeroStructSolution(ctx: RunContext, flightPointProb: om.Problem) -> None:
+    """Write the structural, aero and geometry solution files for this proc's flight point
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    """
     scenario = getattr(flightPointProb.model, ctx.localFlightPoint.name)
     scenario.struct_post.write_solution()
     # The TACS counter is only incremented by the write above, so it is in sync across all flight points
@@ -1673,17 +1682,26 @@ def writeAeroStructSolution():
             wimpressCalc.writeTecplot(os.path.join(ctx.geoOutputDir, f"WimpressCalc_{iterNum:03d}.dat"))
 
 
-def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
+def runAeroStructAnalyses(ctx: RunContext, flightPointProb: om.Problem, x=None, evalFuncs=None, writeSolution=False):
     """Run aerostructural analyses for each flight point
 
     Parameters
     ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
     x : dict[array], optional
         Design variable values, by default None
     evalFuncs : list[str], optional
         Functions to get the values of, by default None
     writeSolution : bool, optional
         Whether to write out the solution, by default False
+
+    Returns
+    -------
+    dict
+        The function values, and whether the analysis failed under "fail"
     """
     funcStartTime = time.time()
     if x is not None:
@@ -1707,7 +1725,7 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
             f.write(f"{funcRunTime:.16e}\n")
 
     if writeSolution and not ctx.args.noFiles:
-        writeAeroStructSolution()
+        writeAeroStructSolution(ctx, flightPointProb)
 
     # Print out some interesting values
     if ctx.ptRank == 0:
@@ -1720,19 +1738,38 @@ def runAeroStructAnalyses(x=None, evalFuncs=None, writeSolution=False):
     return funcs
 
 
-def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolution=False):
+def computeSens(
+    ctx: RunContext,
+    flightPointProb: om.Problem,
+    x=None,
+    funcs=None,
+    gradFuncs=None,
+    dispFuncs=None,
+    writeSolution=False,
+):
     """Compute sensitivities through the coupled aerostructural analyses
 
     Parameters
     ----------
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
     x : dict[array], optional
         Design variable values, by default None
     funcs : dict, optional
         Functions dictionary, not used but required for pyoptsparse function signature, by default None
     gradFuncs : dict[str], optional
         Functions to compute the derivatives of, by default None
+    dispFuncs : list[str], optional
+        Functions to give empty derivatives if they are not in gradFuncs, by default None
     writeSolution : bool, optional
         Whether to write out the solution, by default False
+
+    Returns
+    -------
+    dict
+        The derivatives of each function with respect to each design variable
     """
     funcStartTime = time.time()
     if x is not None:
@@ -1764,7 +1801,7 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
             funcSens[func] = {}
 
     if writeSolution and not ctx.args.noFiles:
-        writeAeroStructSolution()
+        writeAeroStructSolution(ctx, flightPointProb)
 
     if ctx.ptRank == 0:
         for ofName, sens in funcSens.items():
@@ -1780,7 +1817,29 @@ def computeSens(x=None, funcs=None, gradFuncs=None, dispFuncs=None, writeSolutio
 
 # This is the function that takes the function values from the aerostructural analyses and computes any remaining
 # objective/constraints. In our case this involves running the performance model.
-def objCon(funcs, printOK, passThroughFuncs):
+def runPerformanceModel(
+    ctx: RunContext, performanceProb: om.Problem, performanceInputs: list[str], funcs: dict, printOK: bool
+) -> dict:
+    """Run the performance model on the flight point function values and add its outputs to them
+
+    Parameters
+    ----------
+    ctx : RunContext
+        This proc's run configuration
+    performanceProb : om.Problem
+        The performance problem
+    performanceInputs : list[str]
+        The performance model's inputs, each named after the flight point output that feeds it
+    funcs : dict
+        The function values from every flight point, which the performance model outputs are added to
+    printOK : bool
+        Whether to print the functions, False when multipoint is complex-stepping this function
+
+    Returns
+    -------
+    dict
+        funcs, with the performance model outputs added
+    """
     # Multiploint computes the derivatives through this objCOn function using complex step, printOK is False when objCon
     # is being complex-stepped
     performanceProb.set_complex_step_mode(not printOK)
@@ -1806,6 +1865,10 @@ def objCon(funcs, printOK, passThroughFuncs):
     return funcs
 
 
+def objCon(funcs, printOK, passThroughFuncs):
+    return runPerformanceModel(ctx, performanceProb, performanceInputs, funcs, printOK)
+
+
 ctx.multiPoint.setObjCon(objCon)
 
 
@@ -1814,6 +1877,8 @@ ctx.multiPoint.setObjCon(objCon)
 # ==============================================================================
 def procSetObj(x=None):
     return runAeroStructAnalyses(
+        ctx,
+        flightPointProb,
         x,
         evalFuncs=gradFuncs if ctx.settings.doEvaluateGradFuncsOnly else dispFuncs,
         writeSolution=ctx.settings.doWriteSolutionInObj,
@@ -1827,6 +1892,8 @@ ctx.multiPoint.addProcSetObjFunc("all", procSetObj)
 # (this assumes you're using SNOPT's derivative-free line search)
 def procSetSens(x=None, funcs=None):
     return computeSens(
+        ctx,
+        flightPointProb,
         x,
         funcs,
         gradFuncs=gradFuncs,
@@ -1838,19 +1905,32 @@ def procSetSens(x=None, funcs=None):
 ctx.multiPoint.addProcSetSensFunc("all", procSetSens)
 
 
-def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
+def runAnalysesRobustly(
+    ctx: RunContext, flightPointProb: om.Problem, dvFiles: list[str], evalFuncs=None, writeSolution=False
+) -> dict:
     """Sometimes OpenMDAO has trouble converging very flexible designs from scratch. This function will run an analysis,
     and if it fails it will reset the model and try again while gradually ramping the angle of attack until we get back
     to original values.
 
     Parameters
     ----------
-    dvFiles : _type_
-        _description_
+    ctx : RunContext
+        This proc's run configuration
+    flightPointProb : om.Problem
+        This proc's flight point problem
+    dvFiles : list[str]
+        DV files to set again after the model is reset
+    evalFuncs : list[str], optional
+        Functions to get the values of, by default None
     writeSolution : bool, optional
-        _description_, by default False
+        Whether to write out the solution, by default False
+
+    Returns
+    -------
+    dict
+        The function values from the last analysis, and whether it failed under "fail"
     """
-    funcs = runAeroStructAnalyses(evalFuncs=evalFuncs, writeSolution=writeSolution)
+    funcs = runAeroStructAnalyses(ctx, flightPointProb, evalFuncs=evalFuncs, writeSolution=writeSolution)
     if funcs["fail"]:
         # If we got an analysis error, try converging for a lower angle of attack first then run again
         name = ctx.localFlightPoint.name
@@ -1863,11 +1943,11 @@ def runAnalysesRobustly(dvFiles, evalFuncs=None, writeSolution=False):
             setValsFromFiles(dvFiles, flightPointProb)
 
         # HACK: This run will fail but on the next one ADflow will start from nice values
-        runAeroStructAnalyses(evalFuncs=evalFuncs, writeSolution=writeSolution)
+        runAeroStructAnalyses(ctx, flightPointProb, evalFuncs=evalFuncs, writeSolution=writeSolution)
 
         for factor in np.linspace(0.1, 1.0, 5):
             flightPointProb.set_val(f"{name}_AOA", AOA * factor)
-            funcs = runAeroStructAnalyses(evalFuncs=evalFuncs, writeSolution=writeSolution)
+            funcs = runAeroStructAnalyses(ctx, flightPointProb, evalFuncs=evalFuncs, writeSolution=writeSolution)
     return funcs
 
 
@@ -1876,7 +1956,7 @@ if not ctx.settings.isDryRun:
     # Run the model to initialize everything
     # ==============================================================================
     funcs = runAnalysesRobustly(
-        ctx.args.initDVs, evalFuncs=dispFuncs, writeSolution=ctx.settings.doWriteInitialSolution
+        ctx, flightPointProb, ctx.args.initDVs, evalFuncs=dispFuncs, writeSolution=ctx.settings.doWriteInitialSolution
     )
     # Before proceeding, combine the function values from all flight points and send them to every proc
     funcs = gatherMergedDict(ctx.globalComm, funcs)
@@ -1890,6 +1970,8 @@ if len(ctx.args.postInitDVs) != 0:
     setValsFromFiles(ctx.args.postInitDVs, flightPointProb)
     if not ctx.settings.isDryRun:
         funcs = runAnalysesRobustly(
+            ctx,
+            flightPointProb,
             ctx.args.postInitDVs,
             evalFuncs=dispFuncs,
             writeSolution=ctx.settings.doWriteInitialSolution,
@@ -1912,7 +1994,7 @@ if ctx.task == "polar":
                 # Setting the Mach number updates the AeroProblem's other flow conditions, VLM reads them from inputs
                 for suffix, fpAttr, _ in VLM_FLOW_CONDITIONS:
                     x[f"dvs.{ctx.localFlightPoint.name}-{suffix}"] = getattr(ctx.localFlightPoint, fpAttr)
-            funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
+            funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=dispFuncs, writeSolution=True)
             writeOutputs(
                 flightPointProb,
                 outputDir=ctx.localOutputDir,
@@ -1930,7 +2012,7 @@ if ctx.task == "rawPolar":
     for alphaIndex, alpha in enumerate(alphas):
         # We have to set alpha through the dvs otherwise it will be overwritten by the default DV value
         x = {f"dvs.{ctx.localFlightPoint.name}_AOA": alpha}
-        funcs = runAeroStructAnalyses(x=x, evalFuncs=dispFuncs, writeSolution=True)
+        funcs = runAeroStructAnalyses(ctx, flightPointProb, x=x, evalFuncs=dispFuncs, writeSolution=True)
         writeOutputs(
             flightPointProb,
             outputDir=ctx.localOutputDir,
