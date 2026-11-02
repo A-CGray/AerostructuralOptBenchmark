@@ -809,9 +809,6 @@ class AnalysisPoint(Multipoint):
 
     def setup(self):
         ctx = self.options["ctx"]
-        aeroBuilder = self.options["aeroBuilder"]
-        structBuilder = self.options["structBuilder"]
-        ldxferBuilder = self.options["ldxferBuilder"]
         self.fpName = ctx.localFlightPoint.name
 
         builders = {}
@@ -820,314 +817,19 @@ class AnalysisPoint(Multipoint):
         # ivc to keep the top level DVs
         dvSys = self.add_subsystem("dvs", om.IndepVarComp(), promotes=["*"])
 
-        # ==============================================================================
-        # MPHYS Setup
-        # ==============================================================================
-
         if ctx.isAeroStruct:
-            # ==============================================================================
-            # Aero setup
-            # ==============================================================================
-            # --- initialize aero builder ---
-            aeroBuilder.initialize(self.comm)
-            self.aeroSolver = None if ctx.usingVLM else aeroBuilder.get_solver()
-            builders["aero"] = aeroBuilder
-            disciplineVariables["aero"] = MPhysVariables.Aerodynamics.Surface
-
-            # Add lift distribution and slice file output
-            if not ctx.args.noFiles and self.aeroSolver is not None:
-                addAeroOutputs(self.aeroSolver)
-
-        # ==============================================================================
-        # TACS Setup
-        # ==============================================================================
-        structBuilder.initialize(self.comm)
-        self.FEAAssembler = structBuilder.get_fea_assembler()
-        disciplineVariables["struct"] = MPhysVariables.Structures
-        builders["struct"] = structBuilder
-
-        setupTACS.writeStructDVMap(self.FEAAssembler, ctx.args, ctx.outputDir, ctx.globalComm)
-
+            self._addAeroDiscipline(builders, disciplineVariables)
+        self._addStructDiscipline(builders, disciplineVariables)
         if ctx.isAeroStruct:
-            # ==============================================================================
-            # MELD setup
-            # ==============================================================================
-            # Find the nodes at the intersections of the spars and ribs and include them in the LDTransfer
-            if ctx.args.transferTo == "skin+ribends":
-                FEASolver = structBuilder.get_fea_assembler()
-                sparComps = FEASolver.selectCompIDs(include="SPAR")
-                ribComps = FEASolver.selectCompIDs(include="RIB")
-                sparNodes = FEASolver.getGlobalNodeIDsForComps(sparComps, nastranOrdering=True)
-                ribNodes = FEASolver.getGlobalNodeIDsForComps(ribComps, nastranOrdering=True)
-                sharedNodes = list(set(sparNodes).intersection(set(ribNodes)))
-                ldxferBuilder.body_tags[0]["struct"] += sharedNodes
-            ldxferBuilder.initialize(self.comm)
-
-        # ==============================================================================
-        # Mesh and geometry setup
-        # ==============================================================================
-        # Setup mesh components for each discipline
-        for dName in disciplineVariables:
-            self.add_subsystem(f"mesh_{dName}", builders[dName].get_mesh_coordinate_subsystem())
-
-        geometryComp = OM_DVGEOCOMP(file=ctx.ffdFile, type="ffd", options={"isComplex": isComplex})
-        self.add_subsystem("geometry", geometryComp)
-
-        # Connect each discipline's mesh coordinates to the geometry component
-        for dName, discipline in disciplineVariables.items():
-            # Tell the geometry component that there will be a set of coordinates for the discipline
-            geometryComp.nom_add_discipline_coords(discipline.Geometry)
-
-            # Connect the original mesh coordinates as an input to the geometry component
-            self.connect(
-                f"mesh_{dName}.{discipline.Mesh.COORDINATES}",
-                f"geometry.{discipline.Geometry.COORDINATES_INPUT}",
-            )
-
+            self._addLoadTransfer()
+        self._addGeometry(builders, disciplineVariables)
         if ctx.isAeroStruct:
-            # ==============================================================================
-            # WimpressCalc Setup
-            # ==============================================================================
-            wimpressCalc, wimpressCalcComp, _ = setupWimpress(addPlanformCons=ctx.args.addPlanformCons)
-            if ctx.globalRank == 0:
-                wimpressCalc.writeTecplot(os.path.join(ctx.geoOutputDir, "wimpressCalcInit.dat"))
-            # Because the WimpressCalc component isn't following the MPhys convention we can just add the wimpress
-            # coordinates directly as a pointset. The geometry component will then output the deformed coordinates without
-            # needing a corresponding input. Unfortunately we can't do this in setup because the DVGeo instances associated
-            # with the geometry component don't exist yet (they're created in its setup method), so we'll add the pointset
-            # and connect things in configure instead.
-            self.add_subsystem("PlanformValues", wimpressCalcComp)
-
-            if ctx.args.addPlanformCons:
-                self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
-                for varName in PLANFORM_CON_INPUT_NAMES:
-                    self.connect(f"PlanformValues.{varName}", f"PlanformCons.{varName}")
-
-        # ==============================================================================
-        # Add TACS dvs
-        # ==============================================================================
-        initStructDVs, fuelMassDVInds, sizingDVInds = getStructDVs(structBuilder)
-        self.numRibBays = len(fuelMassDVInds)
-        dvSys.add_output("dv_struct", val=initStructDVs[sizingDVInds])
-
-        if ctx.args.addStructDVs:
-            lb, ub = structBuilder.get_dv_bounds()
-            structDVScaling = np.array(structBuilder.fea_assembler.scaleList)
-            self.add_design_var(
-                "dv_struct",
-                lower=lb[sizingDVInds],
-                upper=ub[sizingDVInds],
-                scaler=structDVScaling[sizingDVInds] * ctx.args.structScalingFactor,
-            )
-
-        # ==============================================================================
-        # Fuel mass computation
-        # ==============================================================================
-        fuelDVName = f"{self.fpName}-fuelMass"
-        dvSys.add_output(
-            fuelDVName, val=0.0, shape=1
-        )  # Total fuel mass value, placeholder for now TODO: How should this be set if it's not a DV?
-        if ctx.args.useFuelMassDVs:
-            self.add_design_var(
-                fuelDVName,
-                lower=0.0,
-                scaler=1e-4,
-            )
-
-        setupFuelMassGroup(self, fuelDVName, numRibBays=self.numRibBays)
-
-        # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
-        mergeStructDVs(self, fuelMassDVInds, sizingDVInds)
-
-        # ==============================================================================
-        # Create the scenario
-        # ==============================================================================
+            self._addPlanformCalc()
+        self._addStructAndFuelDVs(dvSys)
+        self._addScenario(disciplineVariables)
         if ctx.isAeroStruct:
-            self.mphys_add_scenario(
-                self.fpName,
-                ScenarioAeroStructural(
-                    aero_builder=aeroBuilder,
-                    struct_builder=structBuilder,
-                    ldxfer_builder=ldxferBuilder,
-                ),
-            )
-        else:
-            self.mphys_add_scenario(self.fpName, ScenarioStructural(struct_builder=structBuilder))
-
-        # Connect geometry to discipline coordinates in the aerostructural scenario
-        for dName, discipline in disciplineVariables.items():
-            src = f"geometry.{discipline.Geometry.COORDINATES_OUTPUT}"
-            if dName == "aero":
-                target = f"{self.fpName}.{discipline.COORDINATES_INITIAL}"
-            else:
-                target = f"{self.fpName}.{discipline.COORDINATES}"
-            self.connect(src, target)
-
-        self.connect("dv_struct_full", f"{self.fpName}.dv_struct")
-
-        # ==============================================================================
-        # Fix lift and drag outputs
-        # ==============================================================================
-        # ADflow and OpenAerostruct don't compute lift and drag in the same way, so we need to fix the outputs
-        # ADflow computes the lift/drag of the single wing, the outputs are not promoted and are called "lift" and "drag"
-        # OpenAerostruct computes the lift and drag for 2 wings, the outputs are promoted and are called "L" and "D"
-
-        if ctx.isAeroStruct:
-            aeroForces = ["Lift"]
-            if ctx.isCruisePoint:
-                aeroForces.append("Drag")
-
-            # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
-            if ctx.usingVLM:
-                scaleFactor = 0.5
-                inputNames = [
-                    f"{self.fpName}.{f[0].upper()}" for f in aeroForces
-                ]  # [f"{self.fpName}.L", f"{self.fpName}.D"]
-            else:
-                scaleFactor = 1.0
-                inputNames = [
-                    f"{self.fpName}.aero_post.{f.lower()}" for f in aeroForces
-                ]  # [f"{self.fpName}.aero_post.lift", f"{self.fpName}.aero_post.drag"]
-
-            for outputName, inputName in zip(aeroForces, inputNames, strict=True):
-                self.add_subsystem(
-                    f"{outputName}CorrectionComp",
-                    om.ExecComp(
-                        f"{getAeroForceName(self.fpName, outputName)} = {scaleFactor} * F",
-                        units="N",
-                    ),
-                    promotes_outputs=["*"],
-                )
-                self.connect(inputName, f"{outputName}CorrectionComp.F")
-
-        if ctx.isAeroStruct:
-            # ==============================================================================
-            # Setup performance calculations
-            # ==============================================================================
-            # Now we need to add the OpenMDAO groups for computing:
-            # - Buffet constraints
-            # - Landing gross mass (One point only)
-            # - Fuel burn (Cruise point only)
-            # - Take-off gross mass (Cruise point only)
-            # - Balanced field length (Cruise point only)
-            # - Wing loading (Cruise point only)
-            if "buffet" in self.fpName.lower():
-                buffetConName = f"{self.fpName}BuffetCon"
-                buffetConstraintComp = om.AddSubtractComp(
-                    output_name=buffetConName,
-                    input_names=["SepArea", "wingArea"],
-                    scaling_factors=[1, -0.04],
-                )
-                self.add_subsystem(
-                    buffetConName,
-                    buffetConstraintComp,
-                    promotes_outputs=["*"],
-                )
-                self.connect("PlanformValues.wimpressArea", f"{buffetConName}.wingArea")
-                sepSensorFuncName = "sepsensorksarea" if ctx.args.sepSensorType == "new" else "sepsensor"
-                sepSensorFuncName = f"{self.fpName}.aero_post.{sepSensorFuncName}"
-                self.connect(sepSensorFuncName, f"{buffetConName}.SepArea")
-
-            if ctx.ptID == 0:
-                massComp = performanceCalc.AirframeMassGroup(
-                    aircraftSpecs=ctx.aircraftSpecs,
-                )
-                self.add_subsystem(
-                    "airframeMass",
-                    massComp,
-                    promotes=[
-                        "landingGrossMass",
-                        ("wingboxMass", f"{self.fpName}.mass"),
-                    ],
-                )
-            if ctx.isCruisePoint:
-                fuelBurnGroup = performanceCalc.FuelBurnGroup(
-                    aircraftSpecs=ctx.aircraftSpecs,
-                    flightPoint=ctx.localFlightPoint,
-                )
-                self.add_subsystem(
-                    "fuelBurn",
-                    fuelBurnGroup,
-                    promotes_inputs=["landingGrossMass"],
-                    promotes_outputs=[
-                        "totalFuelBurn",
-                        "cruiseStartMass",
-                        "takeoffMass",
-                    ],
-                )
-                for force in [
-                    "lift",
-                    "drag",
-                ]:
-                    self.connect(
-                        getAeroForceName(self.fpName, force),
-                        f"fuelBurn.cruise{force.capitalize()}",
-                    )
-
-                # --- Compute the mid-cruise mass ---
-                cruiseMass = performanceCalc.MidSegmentMassComp()
-                self.add_subsystem(
-                    "midCruiseMass",
-                    cruiseMass,
-                    promotes_outputs=[("midSegmentMass", "midCruiseMass")],
-                )
-                self.connect("landingGrossMass", "midCruiseMass.finalMass")
-                self.connect("cruiseStartMass", "midCruiseMass.initialMass")
-
-                # --- Compute the wing loading ---
-                wingLoadingComp = performanceCalc.WingLoadingComp()
-                self.add_subsystem("wingLoading", wingLoadingComp, promotes_outputs=["*"])
-                self.connect("takeoffMass", "wingLoading.MTOM")
-                self.connect("PlanformValues.wimpressArea", "wingLoading.wingArea")
-
-                # --- Compute the fuel burn/TOGM pareto objective if necessary ---
-                if ctx.args.optType == "pareto":
-                    paretoComp = om.AddSubtractComp(
-                        output_name="paretoObj",
-                        input_names=["totalFuelBurn", "takeoffMass"],
-                        scaling_factors=[
-                            ctx.args.paretoWeight / 1e4,
-                            (1 - ctx.args.paretoWeight) / ctx.aircraftSpecs["refMTOW"],
-                        ],
-                    )
-                    self.add_subsystem("paretoComp", paretoComp, promotes=["*"])
-
-                # --- Compute the balanced field length ---
-                if ctx.args.includeBFL:
-                    # OpenConcept expects the wing area for the full aircraft, so we need to double it
-                    self.add_subsystem(
-                        "doubleWingArea",
-                        om.ExecComp("doubleWingArea = 2 * wingArea", units="m**2"),
-                        promotes_outputs=["*"],
-                    )
-                    self.connect("PlanformValues.wimpressArea", "doubleWingArea.wingArea")
-
-                    # OpenConcept wants a single t/c value for the whole wing, so we'll take an average of the values computed by pyGeo
-                    self.add_subsystem(
-                        "avgToC",
-                        AverageComp(inputName="sectionToC", outputName="avgToC"),
-                        promotes_outputs=["*"],
-                    )
-                    self.connect("geometry.SectionToC", "avgToC.sectionToC")
-
-                    takeoffGroup = STWTakeoffAnalysisGroup(
-                        ivc_excludes=[
-                            "ac|weights|MTOW",
-                            "ac|geom|wing|S_ref",
-                            "ac|geom|wing|AR",
-                            "ac|geom|wing|c4sweep",
-                            "ac|geom|wing|taper",
-                            "ac|geom|wing|toverc",
-                        ],
-                        transition_method="simplified" if ctx.args.useSimpleBFL else "ode",
-                    )
-                    self.add_subsystem("takeoff", takeoffGroup)
-                    self.connect("takeoffMass", "takeoff.ac|weights|MTOW")
-                    self.connect("doubleWingArea", "takeoff.ac|geom|wing|S_ref")
-                    self.connect("PlanformValues.aspectRatio", "takeoff.ac|geom|wing|AR")
-                    self.connect("PlanformValues.QCSweep", "takeoff.ac|geom|wing|c4sweep")
-                    self.connect("PlanformValues.trapTaper", "takeoff.ac|geom|wing|taper")
-                    self.connect("avgToC", "takeoff.ac|geom|wing|toverc")
+            self._addAeroForceOutputs()
+            self._addPerformanceGroups()
 
     def configure(self):
         ctx = self.options["ctx"]
@@ -1255,6 +957,321 @@ class AnalysisPoint(Multipoint):
                     # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
                     # steps and doesn't actually waste any time solving.
                     self.dummyAeroSolver.setOption("nCycles", 0)
+
+    def _addAeroDiscipline(self, builders: dict, disciplineVariables: dict) -> None:
+        """Set up the aero discipline"""
+        ctx = self.options["ctx"]
+        aeroBuilder = self.options["aeroBuilder"]
+
+        # --- initialize aero builder ---
+        aeroBuilder.initialize(self.comm)
+        self.aeroSolver = None if ctx.usingVLM else aeroBuilder.get_solver()
+        builders["aero"] = aeroBuilder
+        disciplineVariables["aero"] = MPhysVariables.Aerodynamics.Surface
+
+        # Add lift distribution and slice file output
+        if not ctx.args.noFiles and self.aeroSolver is not None:
+            addAeroOutputs(self.aeroSolver)
+
+    def _addStructDiscipline(self, builders: dict, disciplineVariables: dict) -> None:
+        """Set up the TACS structural discipline"""
+        ctx = self.options["ctx"]
+        structBuilder = self.options["structBuilder"]
+
+        structBuilder.initialize(self.comm)
+        self.FEAAssembler = structBuilder.get_fea_assembler()
+        disciplineVariables["struct"] = MPhysVariables.Structures
+        builders["struct"] = structBuilder
+
+        setupTACS.writeStructDVMap(self.FEAAssembler, ctx.args, ctx.outputDir, ctx.globalComm)
+
+    def _addLoadTransfer(self) -> None:
+        """Set up the MELD load and displacement transfer"""
+        ctx = self.options["ctx"]
+        structBuilder = self.options["structBuilder"]
+        ldxferBuilder = self.options["ldxferBuilder"]
+
+        # Find the nodes at the intersections of the spars and ribs and include them in the LDTransfer
+        if ctx.args.transferTo == "skin+ribends":
+            FEASolver = structBuilder.get_fea_assembler()
+            sparComps = FEASolver.selectCompIDs(include="SPAR")
+            ribComps = FEASolver.selectCompIDs(include="RIB")
+            sparNodes = FEASolver.getGlobalNodeIDsForComps(sparComps, nastranOrdering=True)
+            ribNodes = FEASolver.getGlobalNodeIDsForComps(ribComps, nastranOrdering=True)
+            sharedNodes = list(set(sparNodes).intersection(set(ribNodes)))
+            ldxferBuilder.body_tags[0]["struct"] += sharedNodes
+        ldxferBuilder.initialize(self.comm)
+
+    def _addGeometry(self, builders: dict, disciplineVariables: dict) -> None:
+        """Add the mesh and geometry components"""
+        ctx = self.options["ctx"]
+
+        # Setup mesh components for each discipline
+        for dName in disciplineVariables:
+            self.add_subsystem(f"mesh_{dName}", builders[dName].get_mesh_coordinate_subsystem())
+
+        geometryComp = OM_DVGEOCOMP(file=ctx.ffdFile, type="ffd", options={"isComplex": isComplex})
+        self.add_subsystem("geometry", geometryComp)
+
+        # Connect each discipline's mesh coordinates to the geometry component
+        for dName, discipline in disciplineVariables.items():
+            # Tell the geometry component that there will be a set of coordinates for the discipline
+            geometryComp.nom_add_discipline_coords(discipline.Geometry)
+
+            # Connect the original mesh coordinates as an input to the geometry component
+            self.connect(
+                f"mesh_{dName}.{discipline.Mesh.COORDINATES}",
+                f"geometry.{discipline.Geometry.COORDINATES_INPUT}",
+            )
+
+    def _addPlanformCalc(self) -> None:
+        """Add the WimpressCalc planform calculation and the planform constraints"""
+        ctx = self.options["ctx"]
+
+        wimpressCalc, wimpressCalcComp, _ = setupWimpress(addPlanformCons=ctx.args.addPlanformCons)
+        if ctx.globalRank == 0:
+            wimpressCalc.writeTecplot(os.path.join(ctx.geoOutputDir, "wimpressCalcInit.dat"))
+        # Because the WimpressCalc component isn't following the MPhys convention we can just add the wimpress
+        # coordinates directly as a pointset. The geometry component will then output the deformed coordinates without
+        # needing a corresponding input. Unfortunately we can't do this in setup because the DVGeo instances associated
+        # with the geometry component don't exist yet (they're created in its setup method), so we'll add the pointset
+        # and connect things in configure instead.
+        self.add_subsystem("PlanformValues", wimpressCalcComp)
+
+        if ctx.args.addPlanformCons:
+            self.add_subsystem("PlanformCons", PlanformConGroup(wingGeometry=wingGeometry))
+            for varName in PLANFORM_CON_INPUT_NAMES:
+                self.connect(f"PlanformValues.{varName}", f"PlanformCons.{varName}")
+
+    def _addStructAndFuelDVs(self, dvSys: om.IndepVarComp) -> None:
+        """Add the TACS DVs and the fuel mass computation"""
+        ctx = self.options["ctx"]
+        structBuilder = self.options["structBuilder"]
+
+        initStructDVs, fuelMassDVInds, sizingDVInds = getStructDVs(structBuilder)
+        self.numRibBays = len(fuelMassDVInds)
+        dvSys.add_output("dv_struct", val=initStructDVs[sizingDVInds])
+
+        if ctx.args.addStructDVs:
+            lb, ub = structBuilder.get_dv_bounds()
+            structDVScaling = np.array(structBuilder.fea_assembler.scaleList)
+            self.add_design_var(
+                "dv_struct",
+                lower=lb[sizingDVInds],
+                upper=ub[sizingDVInds],
+                scaler=structDVScaling[sizingDVInds] * ctx.args.structScalingFactor,
+            )
+
+        # --- Fuel mass computation ---
+        fuelDVName = f"{self.fpName}-fuelMass"
+        dvSys.add_output(
+            fuelDVName, val=0.0, shape=1
+        )  # Total fuel mass value, placeholder for now TODO: How should this be set if it's not a DV?
+        if ctx.args.useFuelMassDVs:
+            self.add_design_var(
+                fuelDVName,
+                lower=0.0,
+                scaler=1e-4,
+            )
+
+        setupFuelMassGroup(self, fuelDVName, numRibBays=self.numRibBays)
+
+        # Now add component that merges the fuel mass DVs and the structural DVs back into a full set of TACS DVs
+        mergeStructDVs(self, fuelMassDVInds, sizingDVInds)
+
+    def _addScenario(self, disciplineVariables: dict) -> None:
+        """Create the scenario and connect the geometry and structural DVs to it"""
+        ctx = self.options["ctx"]
+        aeroBuilder = self.options["aeroBuilder"]
+        structBuilder = self.options["structBuilder"]
+        ldxferBuilder = self.options["ldxferBuilder"]
+
+        if ctx.isAeroStruct:
+            self.mphys_add_scenario(
+                self.fpName,
+                ScenarioAeroStructural(
+                    aero_builder=aeroBuilder,
+                    struct_builder=structBuilder,
+                    ldxfer_builder=ldxferBuilder,
+                ),
+            )
+        else:
+            self.mphys_add_scenario(self.fpName, ScenarioStructural(struct_builder=structBuilder))
+
+        # Connect geometry to discipline coordinates in the aerostructural scenario
+        for dName, discipline in disciplineVariables.items():
+            src = f"geometry.{discipline.Geometry.COORDINATES_OUTPUT}"
+            if dName == "aero":
+                target = f"{self.fpName}.{discipline.COORDINATES_INITIAL}"
+            else:
+                target = f"{self.fpName}.{discipline.COORDINATES}"
+            self.connect(src, target)
+
+        self.connect("dv_struct_full", f"{self.fpName}.dv_struct")
+
+    def _addAeroForceOutputs(self) -> None:
+        """Fix lift and drag outputs"""
+        ctx = self.options["ctx"]
+
+        # ADflow and OpenAerostruct don't compute lift and drag in the same way, so we need to fix the outputs
+        # ADflow computes the lift/drag of the single wing, the outputs are not promoted and are called "lift" and "drag"
+        # OpenAerostruct computes the lift and drag for 2 wings, the outputs are promoted and are called "L" and "D"
+
+        aeroForces = ["Lift"]
+        if ctx.isCruisePoint:
+            aeroForces.append("Drag")
+
+        # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
+        if ctx.usingVLM:
+            scaleFactor = 0.5
+            inputNames = [
+                f"{self.fpName}.{f[0].upper()}" for f in aeroForces
+            ]  # [f"{self.fpName}.L", f"{self.fpName}.D"]
+        else:
+            scaleFactor = 1.0
+            inputNames = [
+                f"{self.fpName}.aero_post.{f.lower()}" for f in aeroForces
+            ]  # [f"{self.fpName}.aero_post.lift", f"{self.fpName}.aero_post.drag"]
+
+        for outputName, inputName in zip(aeroForces, inputNames, strict=True):
+            self.add_subsystem(
+                f"{outputName}CorrectionComp",
+                om.ExecComp(
+                    f"{getAeroForceName(self.fpName, outputName)} = {scaleFactor} * F",
+                    units="N",
+                ),
+                promotes_outputs=["*"],
+            )
+            self.connect(inputName, f"{outputName}CorrectionComp.F")
+
+    def _addPerformanceGroups(self) -> None:
+        """Set up the performance calculations"""
+        ctx = self.options["ctx"]
+
+        # Now we need to add the OpenMDAO groups for computing:
+        # - Buffet constraints
+        # - Landing gross mass (One point only)
+        # - Fuel burn (Cruise point only)
+        # - Take-off gross mass (Cruise point only)
+        # - Balanced field length (Cruise point only)
+        # - Wing loading (Cruise point only)
+        if "buffet" in self.fpName.lower():
+            buffetConName = f"{self.fpName}BuffetCon"
+            buffetConstraintComp = om.AddSubtractComp(
+                output_name=buffetConName,
+                input_names=["SepArea", "wingArea"],
+                scaling_factors=[1, -0.04],
+            )
+            self.add_subsystem(
+                buffetConName,
+                buffetConstraintComp,
+                promotes_outputs=["*"],
+            )
+            self.connect("PlanformValues.wimpressArea", f"{buffetConName}.wingArea")
+            sepSensorFuncName = "sepsensorksarea" if ctx.args.sepSensorType == "new" else "sepsensor"
+            sepSensorFuncName = f"{self.fpName}.aero_post.{sepSensorFuncName}"
+            self.connect(sepSensorFuncName, f"{buffetConName}.SepArea")
+
+        if ctx.ptID == 0:
+            massComp = performanceCalc.AirframeMassGroup(
+                aircraftSpecs=ctx.aircraftSpecs,
+            )
+            self.add_subsystem(
+                "airframeMass",
+                massComp,
+                promotes=[
+                    "landingGrossMass",
+                    ("wingboxMass", f"{self.fpName}.mass"),
+                ],
+            )
+        if ctx.isCruisePoint:
+            fuelBurnGroup = performanceCalc.FuelBurnGroup(
+                aircraftSpecs=ctx.aircraftSpecs,
+                flightPoint=ctx.localFlightPoint,
+            )
+            self.add_subsystem(
+                "fuelBurn",
+                fuelBurnGroup,
+                promotes_inputs=["landingGrossMass"],
+                promotes_outputs=[
+                    "totalFuelBurn",
+                    "cruiseStartMass",
+                    "takeoffMass",
+                ],
+            )
+            for force in [
+                "lift",
+                "drag",
+            ]:
+                self.connect(
+                    getAeroForceName(self.fpName, force),
+                    f"fuelBurn.cruise{force.capitalize()}",
+                )
+
+            # --- Compute the mid-cruise mass ---
+            cruiseMass = performanceCalc.MidSegmentMassComp()
+            self.add_subsystem(
+                "midCruiseMass",
+                cruiseMass,
+                promotes_outputs=[("midSegmentMass", "midCruiseMass")],
+            )
+            self.connect("landingGrossMass", "midCruiseMass.finalMass")
+            self.connect("cruiseStartMass", "midCruiseMass.initialMass")
+
+            # --- Compute the wing loading ---
+            wingLoadingComp = performanceCalc.WingLoadingComp()
+            self.add_subsystem("wingLoading", wingLoadingComp, promotes_outputs=["*"])
+            self.connect("takeoffMass", "wingLoading.MTOM")
+            self.connect("PlanformValues.wimpressArea", "wingLoading.wingArea")
+
+            # --- Compute the fuel burn/TOGM pareto objective if necessary ---
+            if ctx.args.optType == "pareto":
+                paretoComp = om.AddSubtractComp(
+                    output_name="paretoObj",
+                    input_names=["totalFuelBurn", "takeoffMass"],
+                    scaling_factors=[
+                        ctx.args.paretoWeight / 1e4,
+                        (1 - ctx.args.paretoWeight) / ctx.aircraftSpecs["refMTOW"],
+                    ],
+                )
+                self.add_subsystem("paretoComp", paretoComp, promotes=["*"])
+
+            # --- Compute the balanced field length ---
+            if ctx.args.includeBFL:
+                # OpenConcept expects the wing area for the full aircraft, so we need to double it
+                self.add_subsystem(
+                    "doubleWingArea",
+                    om.ExecComp("doubleWingArea = 2 * wingArea", units="m**2"),
+                    promotes_outputs=["*"],
+                )
+                self.connect("PlanformValues.wimpressArea", "doubleWingArea.wingArea")
+
+                # OpenConcept wants a single t/c value for the whole wing, so we'll take an average of the values computed by pyGeo
+                self.add_subsystem(
+                    "avgToC",
+                    AverageComp(inputName="sectionToC", outputName="avgToC"),
+                    promotes_outputs=["*"],
+                )
+                self.connect("geometry.SectionToC", "avgToC.sectionToC")
+
+                takeoffGroup = STWTakeoffAnalysisGroup(
+                    ivc_excludes=[
+                        "ac|weights|MTOW",
+                        "ac|geom|wing|S_ref",
+                        "ac|geom|wing|AR",
+                        "ac|geom|wing|c4sweep",
+                        "ac|geom|wing|taper",
+                        "ac|geom|wing|toverc",
+                    ],
+                    transition_method="simplified" if ctx.args.useSimpleBFL else "ode",
+                )
+                self.add_subsystem("takeoff", takeoffGroup)
+                self.connect("takeoffMass", "takeoff.ac|weights|MTOW")
+                self.connect("doubleWingArea", "takeoff.ac|geom|wing|S_ref")
+                self.connect("PlanformValues.aspectRatio", "takeoff.ac|geom|wing|AR")
+                self.connect("PlanformValues.QCSweep", "takeoff.ac|geom|wing|c4sweep")
+                self.connect("PlanformValues.trapTaper", "takeoff.ac|geom|wing|taper")
+                self.connect("avgToC", "takeoff.ac|geom|wing|toverc")
 
 
 # --- Now actually create the OpenMDAO model for each point ---
