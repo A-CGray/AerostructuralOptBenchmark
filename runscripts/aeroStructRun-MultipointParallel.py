@@ -1570,6 +1570,8 @@ def runAnalysesRobustly(
     and if it fails it will reset the model and try again while gradually ramping the angle of attack until we get back
     to original values.
 
+    A structural-only load case has no angle of attack to ramp, so a failed analysis of one is returned as it is.
+
     Parameters
     ----------
     ctx : RunContext
@@ -1589,7 +1591,9 @@ def runAnalysesRobustly(
         The function values from the last analysis, and whether it failed under "fail"
     """
     funcs = runAeroStructAnalyses(ctx, flightPointProb, evalFuncs=evalFuncs, writeSolution=writeSolution)
-    if funcs["fail"]:
+    # Retrying a structural-only load case would try to read its nonexistent angle of attack and raise on this flight
+    # point's procs only, which would leave every other flight point waiting forever for them in the next collective call
+    if funcs["fail"] and ctx.isAeroStruct:
         # If we got an analysis error, try converging for a lower angle of attack first then run again
         name = ctx.localFlightPoint.name
         u_struct = np.copy(flightPointProb.get_val(f"{name}.solver.u_struct"))
