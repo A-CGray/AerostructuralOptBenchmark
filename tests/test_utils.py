@@ -3,6 +3,11 @@
 # ==============================================================================
 import contextlib
 import io
+import json
+import os
+import shutil
+import subprocess
+import sys
 import unittest
 
 # ==============================================================================
@@ -10,19 +15,21 @@ import unittest
 # ==============================================================================
 import numpy as np
 import openmdao.api as om
-from hypothesis import given
-from hypothesis.strategies import integers, lists, text
+from hypothesis import assume, given
+from hypothesis.strategies import data, integers, lists, sampled_from, text
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
 from utils import (
     BANNER_LINE,
-    allowResponsesAfterSetup,
+    checkInputsHaveSources,
+    checkPerformanceOutputsDeclared,
     computeProcsPerMember,
     gatherMergedDict,
     gatherUnion,
     getDesignVarSources,
+    getPromotedInputNames,
     getRelevantInputs,
     getSource,
     printBanner,
@@ -31,21 +38,56 @@ from utils import (
 
 MAX_TEST_MEMBERS = 50
 MAX_TEST_EXTRA_PROCS = 1000
+NAME_ALPHABET = "abc"
+MISSING_NAME_ALPHABET = NAME_ALPHABET + "d"
+RUNSCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runscripts")
+NUM_MPI_TEST_PROCS = 3
+MPI_TEST_TIMEOUT = 120  # seconds
+
+# Run by test_same_names_on_every_rank_under_mpi: prints each rank's promoted input names, for a model whose parallel
+# group puts some inputs on only some ranks
+PROMOTED_INPUT_NAMES_MPI_SCRIPT = """
+import json
+import openmdao.api as om
+from mpi4py import MPI
+from utils import getPromotedInputNames
+
+prob = om.Problem()
+prob.model.add_subsystem("comp1", om.ExecComp("b = 2 * x"), promotes=["*"])
+par = prob.model.add_subsystem("par", om.ParallelGroup(), promotes=["*"])
+par.add_subsystem("comp2", om.ExecComp("c = 3 * y"), promotes=["*"])
+par.add_subsystem("comp3", om.ExecComp("d = 3 * z"), promotes=["*"])
+prob.setup()
+allNames = MPI.COMM_WORLD.gather(getPromotedInputNames(prob), root=0)
+if MPI.COMM_WORLD.rank == 0:
+    print(json.dumps(allNames))
+"""
 
 
 class FakeComm:
-    """Imitates an mpi4py communicator as seen from one rank, returning pre-set data for every rank."""
+    """Imitates an mpi4py communicator as seen from one rank, returning pre-set data for the other ranks.
+
+    The data this rank sends replaces its own pre-set entry, and the last data sent is kept in `sentData`.
+    """
 
     def __init__(self, rank: int, allRankData: list):
         self.rank = rank
         self.allRankData = allRankData
+        self.sentData = None
+
+    def _collect(self, data) -> list:
+        self.sentData = data
+        collected = list(self.allRankData)
+        collected[self.rank] = data
+        return collected
 
     def allgather(self, data):
-        return list(self.allRankData)
+        return self._collect(data)
 
     def gather(self, data, root=0):
+        collected = self._collect(data)
         if self.rank == root:
-            return list(self.allRankData)
+            return collected
         return None
 
 
@@ -271,51 +313,202 @@ class TestGetDesignVarSources(unittest.TestCase):
         self.assertEqual(sorted(getDesignVarSources(prob.model)), sorted(expected))
 
 
-class TestAllowResponsesAfterSetup(unittest.TestCase):
-    def setUp(self):
-        self.prob = om.Problem()
-        ivc = self.prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
-        ivc.add_output("x", 1.0)
-        self.prob.model.add_subsystem("comp", om.ExecComp("y = 2*x"), promotes=["*"])
-        self.prob.model.add_design_var("x")
-        self.prob.setup()
-
-    def test_constraint_added_inside_is_included_by_final_setup(self):
+class TestGetPromotedInputNames(unittest.TestCase):
+    def test_returns_each_unconnected_input_once_in_sorted_order(self):
         """
-        Given a problem that has already been set up,
-        when a constraint is added inside the context manager and final_setup is then called,
-        then the problem's constraints include it.
+        Given a model where two components share one promoted input and one has another input of its own,
+        when the promoted input names are listed,
+        then each input that takes its value from outside the model appears once, in sorted order.
         """
-        with allowResponsesAfterSetup(self.prob):
-            self.prob.model.add_constraint("y", upper=1.0)
-        self.prob.final_setup()
-        self.assertIn("y", self.prob.model.get_constraints())
-
-    def test_static_mode_restored_after_error(self):
-        """Assert that the problem's static mode flag is restored even when an error is raised inside the context."""
-        originalStaticMode = self.prob.model._problem_meta["static_mode"]
-        with self.assertRaises(RuntimeError):
-            with allowResponsesAfterSetup(self.prob):
-                raise RuntimeError("Failure while adding a response")
-        self.assertEqual(self.prob.model._problem_meta["static_mode"], originalStaticMode)
-
-    def test_after_final_setup_raises(self):
-        """
-        Given a problem on which final_setup has already been called,
-        when the context manager is entered,
-        then an error is raised, because responses added now would never be included.
-        """
-        self.prob.final_setup()
-        with self.assertRaises(RuntimeError):
-            with allowResponsesAfterSetup(self.prob):
-                self.prob.model.add_constraint("y", upper=1.0)
-
-    def test_before_setup_raises(self):
-        """Assert that entering the context manager on a problem that hasn't been set up raises an error."""
         prob = om.Problem()
-        with self.assertRaises(RuntimeError):
-            with allowResponsesAfterSetup(prob):
-                pass
+        prob.model.add_subsystem("comp1", om.ExecComp("b = 2 * x"), promotes=["*"])
+        prob.model.add_subsystem("comp2", om.ExecComp("c = x + w"), promotes=["*"])
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["w", "x"])
+
+    def test_excludes_inputs_fed_by_another_component(self):
+        """Assert that an input connected to another component's output is not listed as a model input."""
+        prob = om.Problem()
+        prob.model.add_subsystem("comp1", om.ExecComp("y = 2 * x"), promotes=["*"])
+        prob.model.add_subsystem("comp2", om.ExecComp("z = y + w"), promotes=["*"])
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["w", "x"])
+
+    def test_reports_an_unpromoted_unconnected_input_by_its_path(self):
+        """
+        Given a component whose input is neither promoted nor connected,
+        when the promoted input names are listed,
+        then the input is still reported, by its path, so a missing source for it can be caught.
+        """
+        prob = om.Problem()
+        prob.model.add_subsystem("comp", om.ExecComp("b = 2 * a"))
+        prob.setup()
+        self.assertEqual(getPromotedInputNames(prob), ["comp.a"])
+
+    @unittest.skipIf(shutil.which("mpiexec") is None, "mpiexec is not available")
+    def test_same_names_on_every_rank_under_mpi(self):
+        """
+        Given a model run on several MPI ranks, with a parallel group that puts some inputs on only some ranks,
+        when every rank lists the promoted input names,
+        then every rank gets the full list, in the same order.
+        """
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([RUNSCRIPTS_DIR, os.environ.get("PYTHONPATH", "")]))
+        result = subprocess.run(
+            ["mpiexec", "-n", str(NUM_MPI_TEST_PROCS), sys.executable, "-c", PROMOTED_INPUT_NAMES_MPI_SCRIPT],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=MPI_TEST_TIMEOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        allRankNames = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(allRankNames, [["x", "y", "z"]] * NUM_MPI_TEST_PROCS)
+
+
+allRankOutputs = lists(lists(text(NAME_ALPHABET, min_size=1)), min_size=1)
+
+
+class TestCheckInputsHaveSources(unittest.TestCase):
+    @given(allRankOutputs, data())
+    def test_inputs_produced_on_any_rank_pass(self, allRankOutputNames, drawData):
+        """
+        Given output names spread over several ranks,
+        when every one of those names is checked as an input from any one rank,
+        then no error is raised, because each input is an output on some rank.
+        """
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        inputNames = [name for rankNames in allRankOutputNames for name in rankNames]
+        self.assertIsNone(
+            checkInputsHaveSources(inputNames, allRankOutputNames[rank], FakeComm(rank, allRankOutputNames))
+        )
+
+    @given(allRankOutputs, data())
+    def test_missing_input_raises_naming_it(self, allRankOutputNames, drawData):
+        """
+        Given an input name that is not an output on any rank,
+        when the inputs are checked,
+        then a ValueError naming the missing input is raised.
+        """
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        missingName = drawData.draw(text(MISSING_NAME_ALPHABET, min_size=1))
+        presentNames = [name for rankNames in allRankOutputNames for name in rankNames]
+        assume(missingName not in presentNames)
+        inputNames = presentNames[:1] + [missingName]
+        with self.assertRaises(ValueError) as context:
+            checkInputsHaveSources(inputNames, allRankOutputNames[rank], FakeComm(rank, allRankOutputNames))
+        self.assertIn(repr(missingName), str(context.exception))
+
+    @given(allRankOutputs, data())
+    def test_sends_only_local_outputs_that_are_inputs(self, allRankOutputNames, drawData):
+        """
+        Given inputs that are all outputs on some rank,
+        when the inputs are checked,
+        then this rank sends only those of its outputs that are inputs, not all of them.
+        """
+        allNames = sorted({name for rankNames in allRankOutputNames for name in rankNames})
+        assume(len(allNames) > 0)
+        rank = drawData.draw(integers(0, len(allRankOutputNames) - 1))
+        inputNames = drawData.draw(lists(sampled_from(allNames)))
+        comm = FakeComm(rank, allRankOutputNames)
+        checkInputsHaveSources(inputNames, allRankOutputNames[rank], comm)
+        self.assertEqual(set(comm.sentData), set(inputNames) & set(allRankOutputNames[rank]))
+
+    @given(allRankOutputs)
+    def test_empty_inputs_pass(self, allRankOutputNames):
+        """Assert that checking no inputs raises no error, whatever outputs the ranks have."""
+        self.assertIsNone(checkInputsHaveSources([], allRankOutputNames[0], FakeComm(0, allRankOutputNames)))
+
+
+TEST_ALIAS_PREFIX = "_testAlias"
+DECLARABLE_OUTPUT_NAMES = ["a", "b", "c"]
+
+
+def buildDeclaredOutputsTestProblem(declaredNames: list[str]) -> om.Problem:
+    """Build a toy problem with design variable `x`, outputs `a`, `b` and `c`, and aliased constraints on `declaredNames`."""
+    prob = om.Problem()
+    ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+    ivc.add_output("x", 1.0)
+    prob.model.add_subsystem("comp", om.ExecComp(["a = 2*x", "b = 3*x", "c = 4*x"]), promotes=["*"])
+    prob.model.add_design_var("x")
+    for name in declaredNames:
+        prob.model.add_constraint(name, alias=f"{TEST_ALIAS_PREFIX}{name}")
+    prob.setup()
+    prob.final_setup()
+    return prob
+
+
+def singleRankComm() -> FakeComm:
+    """Return a fake communicator with one rank."""
+    return FakeComm(0, [[]])
+
+
+class TestCheckPerformanceOutputsDeclared(unittest.TestCase):
+    @given(lists(sampled_from(DECLARABLE_OUTPUT_NAMES), unique=True))
+    def test_raises_exactly_when_an_output_is_undeclared(self, declaredNames):
+        """
+        Given a model on which some of its performance outputs are declared as aliased constraints,
+        when the declarations are checked,
+        then a ValueError naming every undeclared output is raised if any is undeclared, and nothing is raised otherwise.
+        """
+        prob = buildDeclaredOutputsTestProblem(declaredNames)
+        undeclaredNames = sorted(set(DECLARABLE_OUTPUT_NAMES) - set(declaredNames))
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        if len(undeclaredNames) == 0:
+            checkPerformanceOutputsDeclared(
+                prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+            )
+        else:
+            with self.assertRaises(ValueError) as context:
+                checkPerformanceOutputsDeclared(
+                    prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+                )
+            self.assertIn(repr(undeclaredNames), str(context.exception))
+
+    def test_design_variables_need_no_declaration(self):
+        """Assert that a performance output that is a design variable of the model doesn't need an aliased constraint."""
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        checkPerformanceOutputsDeclared(
+            prob.model, ["x"] + DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, singleRankComm()
+        )
+
+    def test_names_this_model_does_not_output_are_ignored(self):
+        """Assert that performance outputs created by other flight point models don't need a declaration on this one."""
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        checkPerformanceOutputsDeclared(prob.model, ["elsewhere"], outputNames, TEST_ALIAS_PREFIX, singleRankComm())
+
+    def test_undeclared_output_on_another_rank_raises_here(self):
+        """
+        Given a rank on which every performance output is declared, and another rank with an undeclared one,
+        when the declarations are checked,
+        then a ValueError naming the other rank's undeclared output is raised on this rank too.
+        """
+        prob = buildDeclaredOutputsTestProblem(DECLARABLE_OUTPUT_NAMES)
+        outputNames = DECLARABLE_OUTPUT_NAMES + ["x"]
+        otherRankUndeclaredNames = ["elsewhere"]
+        comm = FakeComm(0, [[], otherRankUndeclaredNames])
+        with self.assertRaises(ValueError) as context:
+            checkPerformanceOutputsDeclared(prob.model, DECLARABLE_OUTPUT_NAMES, outputNames, TEST_ALIAS_PREFIX, comm)
+        self.assertIn(repr(otherRankUndeclaredNames), str(context.exception))
+
+    def test_constraints_with_other_aliases_do_not_count(self):
+        """
+        Given an output that is constrained, but not with the performance output alias prefix,
+        when the declarations are checked,
+        then a ValueError naming it is raised.
+        """
+        prob = om.Problem()
+        ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", 1.0)
+        prob.model.add_subsystem("comp", om.ExecComp("a = 2*x"), promotes=["*"])
+        prob.model.add_design_var("x")
+        prob.model.add_constraint("a", upper=1.0)
+        prob.setup()
+        prob.final_setup()
+        with self.assertRaises(ValueError) as context:
+            checkPerformanceOutputsDeclared(prob.model, ["a"], ["a", "x"], TEST_ALIAS_PREFIX, singleRankComm())
+        self.assertIn(repr(["a"]), str(context.exception))
 
 
 if __name__ == "__main__":

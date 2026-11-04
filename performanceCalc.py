@@ -626,6 +626,11 @@ class FuelDistributionGroup(om.Group):
         )
 
 
+def getAeroForceName(fpName: str, forceName: str) -> str:
+    """Get the name of a flight point's aerodynamic force output, e.g. "cruise_Lift" for the cruise lift"""
+    return f"{fpName}_{forceName.capitalize()}"
+
+
 class LiftConstraintGroup(om.Group):
     def initialize(self):
         self.options.declare("aircraftSpecs", types=dict)
@@ -645,9 +650,9 @@ class LiftConstraintGroup(om.Group):
                     self.add_subsystem(
                         f"{fp.name}_mass",
                         om.ExecComp(
-                            f"{inputMassVar} = landingGrossMass - fuelBurn * {fuelFraction}",
+                            f"{inputMassVar} = landingGrossMass - totalFuelBurn * {fuelFraction}",
                             landingGrossMass={"units": "kg"},
-                            fuelBurn={"units": "kg"},
+                            totalFuelBurn={"units": "kg"},
                             **{inputMassVar: {"units": "kg"}},
                         ),
                         promotes=["*"],
@@ -659,7 +664,7 @@ class LiftConstraintGroup(om.Group):
                     liftConComp,
                     promotes_inputs=[
                         ("mass", inputMassVar),
-                        ("lift", f"{fp.name}Lift"),
+                        ("lift", getAeroForceName(fp.name, "Lift")),
                     ],
                     promotes_outputs=[("liftDiff", f"{fp.name}LiftDiff")],
                 )
@@ -695,15 +700,15 @@ class FuelConsistencyGroup(om.Group):
                 )
             else:
                 execComp = om.ExecComp(
-                    f"fuelMassDiff = fuelMass - ({fp.fuelFraction} * fuelBurn + {specs['reserveFuelMass']})",
+                    f"fuelMassDiff = fuelMass - ({fp.fuelFraction} * totalFuelBurn + {specs['reserveFuelMass']})",
                     fuelMass={"units": "kg"},
-                    fuelBurn={"units": "kg"},
+                    totalFuelBurn={"units": "kg"},
                     fuelMassDiff={"units": "kg"},
                 )
                 self.add_subsystem(
                     f"{fp.name}FuelConsistency",
                     execComp,
-                    promotes_inputs=[("fuelMass", f"{fp.name}-fuelMass"), "fuelBurn"],
+                    promotes_inputs=[("fuelMass", f"{fp.name}-fuelMass"), "totalFuelBurn"],
                     promotes_outputs=[("fuelMassDiff", f"{fp.name}FuelMassDiff")],
                 )
 
@@ -745,7 +750,8 @@ class FuelAndMassConstraintGroup(om.Group):
                     wingboxVolumeFraction=specs["wingboxFuelVolumeFraction"],
                     auxTankVolume=specs["auxFuelVolume"],
                 ),
-                promotes=["*"],
+                promotes_inputs=[("fuelBurn", "totalFuelBurn"), "wingboxVolume"],
+                promotes_outputs=["fuelTankUsage"],
             )
 
 
