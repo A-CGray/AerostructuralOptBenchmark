@@ -410,7 +410,7 @@ def setupDVGeo(
             centreBoxTECoords = wingGeometry["wingbox"]["TESparCoords"][:2]
             lowerBound = list(centreBoxTECoords.flatten())
             for ii in range(len(lowerBound)):
-                if ii % 3 != chordInd:
+                if ii % 3 != chordIndex:
                     lowerBound[ii] = None
             numPoints = 2
             DVGeoComp.nom_addLocationConstraints1D(
