@@ -408,18 +408,13 @@ def setupDVGeo(
         if args.addPlanformCons:
             # Constraint that the rear spar of the centre wingbox cannot move any further backward than its original location
             centreBoxTECoords = wingGeometry["wingbox"]["TESparCoords"][:2]
-            lowerBound = list(centreBoxTECoords.flatten())
-            for ii in range(len(lowerBound)):
-                if ii % 3 != chordIndex:
-                    lowerBound[ii] = None
-            numPoints = 2
-            DVGeoComp.nom_addLocationConstraints1D(
-                "TESparLocation",
-                centreBoxTECoords,
-                numPoints,
-                lower=lowerBound,
-                upper=[None, None, None] * numPoints,
-                scaled=False,
-                scale=1.0,
+            numPoints = centreBoxTECoords.shape[0]
+            numDims = centreBoxTECoords.shape[1]
+            DVGeoComp.nom_addLocationConstraints1D("TESparLocation", centreBoxTECoords, numPoints, scaled=False)
+            # The constraint output holds the flattened (x, y, z) of each point, only constrain the chordwise components
+            chordwiseIndices = [ii * numDims + chordIndex for ii in range(numPoints)]
+            top.add_constraint(
+                f"{geoCompName}.TESparLocation",
+                indices=chordwiseIndices,
+                upper=centreBoxTECoords[:, chordIndex],
             )
-            top.add_constraint(f"{geoCompName}.TESparLocation", lower=lowerBound)
