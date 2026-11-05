@@ -422,4 +422,4 @@ def setupDVGeo(
                 scaled=False,
                 scale=1.0,
             )
-            top.add_constraint("TESparLocation", lower=lowerBound)
+            top.add_constraint(f"{geoCompName}.TESparLocation", lower=lowerBound)
