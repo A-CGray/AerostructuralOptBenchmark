@@ -16,16 +16,19 @@ import unittest
 import numpy as np
 import openmdao.api as om
 from hypothesis import assume, given
-from hypothesis.strategies import data, integers, lists, sampled_from, text
+from hypothesis.strategies import data, floats, integers, lists, sampled_from, text
+from pyoptsparse import Optimization
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
 from utils import (
     BANNER_LINE,
+    addConstraintFromOpenMDAO,
     checkInputsHaveSources,
     checkPerformanceOutputsDeclared,
     computeProcsPerMember,
+    convertInfiniteBoundsToNone,
     gatherMergedDict,
     gatherUnion,
     getDesignVarSources,
@@ -509,6 +512,61 @@ class TestCheckPerformanceOutputsDeclared(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             checkPerformanceOutputsDeclared(prob.model, ["a"], ["a", "x"], TEST_ALIAS_PREFIX, singleRankComm())
         self.assertIn(repr(["a"]), str(context.exception))
+
+
+class TestConvertInfiniteBoundsToNone(unittest.TestCase):
+    def test_no_bound_stays_none(self):
+        """Assert that a bound of None is returned as None."""
+        self.assertIsNone(convertInfiniteBoundsToNone(None))
+
+    @given(floats(allow_nan=False))
+    def test_scalar_bound(self, bound):
+        """Assert that an infinite scalar bound becomes None and a finite one is returned unchanged."""
+        converted = convertInfiniteBoundsToNone(bound)
+        if np.isinf(bound):
+            self.assertIsNone(converted)
+        else:
+            self.assertEqual(converted, bound)
+
+    @given(lists(floats(allow_nan=False), min_size=1))
+    def test_array_bound_entries(self, bound):
+        """
+        Given an array bound with any mix of finite and infinite entries,
+        when it is converted,
+        then each infinite entry becomes None and each finite entry keeps its value.
+        """
+        converted = convertInfiniteBoundsToNone(np.array(bound))
+        self.assertEqual(len(converted), len(bound))
+        for convertedValue, value in zip(converted, bound, strict=True):
+            if np.isinf(value):
+                self.assertIsNone(convertedValue)
+            else:
+                self.assertEqual(convertedValue, value)
+
+
+class TestAddConstraintFromOpenMDAO(unittest.TestCase):
+    def test_infinite_bound_entries_are_unbounded_in_pyoptsparse(self):
+        """
+        Given an OpenMDAO constraint whose upper bound array has infinite entries and no lower bound,
+        when it is added to a pyOptSparse problem,
+        then the infinite upper bound entries and all the lower bound entries are None, so pyOptSparse leaves them
+        unbounded, while the finite upper bound entry is kept.
+        """
+        prob = om.Problem()
+        ivc = prob.model.add_subsystem("ivc", om.IndepVarComp(), promotes=["*"])
+        ivc.add_output("x", np.ones(3))
+        prob.model.add_design_var("x")
+        prob.model.add_constraint("x", upper=np.array([1.0, np.inf, np.inf]))
+        prob.setup()
+        prob.final_setup()
+
+        optProb = Optimization("test", lambda x: x)
+        optProb.addVarGroup("x", 3)
+        addConstraintFromOpenMDAO(prob.model.get_constraints()["x"], optProb, prob)
+
+        con = optProb.constraints["x"]
+        self.assertEqual(list(con.upper), [1.0, None, None])
+        self.assertEqual(list(con.lower), [None, None, None])
 
 
 if __name__ == "__main__":

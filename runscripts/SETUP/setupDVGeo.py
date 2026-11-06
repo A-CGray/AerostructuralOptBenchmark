@@ -409,12 +409,9 @@ def setupDVGeo(
             # Constraint that the rear spar of the centre wingbox cannot move any further backward than its original location
             centreBoxTECoords = wingGeometry["wingbox"]["TESparCoords"][:2]
             numPoints = centreBoxTECoords.shape[0]
-            numDims = centreBoxTECoords.shape[1]
             DVGeoComp.nom_addLocationConstraints1D("TESparLocation", centreBoxTECoords, numPoints, scaled=False)
-            # The constraint output holds the flattened (x, y, z) of each point, only constrain the chordwise components
-            chordwiseIndices = [ii * numDims + chordIndex for ii in range(numPoints)]
-            top.add_constraint(
-                f"{geoCompName}.TESparLocation",
-                indices=chordwiseIndices,
-                upper=centreBoxTECoords[:, chordIndex],
-            )
+            # The constraint output holds the flattened (x, y, z) of each point, only the chordwise components are
+            # bounded, the infinite bounds on the others leave them unconstrained
+            upperBound = np.full_like(centreBoxTECoords, np.inf)
+            upperBound[:, chordIndex] = centreBoxTECoords[:, chordIndex]
+            top.add_constraint(f"{geoCompName}.TESparLocation", upper=upperBound.flatten())

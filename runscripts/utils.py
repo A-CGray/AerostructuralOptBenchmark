@@ -675,7 +675,32 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
         jac = None
 
     # Add the constraint
+    lb = convertInfiniteBoundsToNone(lb)
+    ub = convertInfiniteBoundsToNone(ub)
     optProb.addConGroup(name, size, lower=lb, upper=ub, scale=scale, wrt=wrt, jac=jac, linear=linear)
+
+
+def convertInfiniteBoundsToNone(bound):
+    """Convert the infinite entries of an OpenMDAO constraint bound to None, which pyOptSparse treats as unbounded
+
+    Infinite entries let a constraint bound only some entries of an array output, OpenMDAO keeps them as infinite but
+    pyOptSparse would pass them straight to the optimiser.
+
+    Parameters
+    ----------
+    bound : float, numpy.ndarray or None
+        The bound as OpenMDAO stores it
+
+    Returns
+    -------
+    float, list or None
+        The bound with every infinite entry replaced by None, an array bound becomes a list
+    """
+    if bound is None:
+        return None
+    if np.ndim(bound) == 0:
+        return None if np.isinf(bound) else bound
+    return [None if np.isinf(value) else value for value in bound]
 
 
 def getTipDisplacement(prob, fpName):
