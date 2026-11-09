@@ -95,6 +95,7 @@ from utils import (
     gatherUnion,
     setLocalVals,
     printBanner,
+    setMomentReferenceToCG,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -459,10 +460,13 @@ def buildRunContext(args: argparse.Namespace, comm: MPI.Intracomm) -> RunContext
 
     # Define flight points to use
     flightPoints = flightPointSets[args.flightPointSet]
-    # Set reference geometric values
+    # Set reference geometric values, and take moments about each flight point's CG
     for fp in flightPoints:
         fp.areaRef = runAircraftSpecs["refArea"]
         fp.chordRef = runAircraftSpecs["refChord"]
+        # Load cases have no aero analysis and so no CG fraction
+        if isinstance(fp, FlightPoint):
+            setMomentReferenceToCG(fp)
 
     flightPointsDict = {fp.name: fp for fp in flightPoints}
 
@@ -1231,6 +1235,11 @@ class AnalysisPoint(Multipoint):
             for suffix, fpAttr, units in VLM_FLOW_CONDITIONS:
                 dvComp.add_output(f"{fp.name}-{suffix}", val=getattr(fp, fpAttr), units=units)
                 self.connect(f"{fp.name}-{suffix}", f"{fp.name}.{suffix}")
+            # The moment reference point is not one of VLM_FLOW_CONDITIONS because it doesn't change with the flow
+            # conditions, so the polar must not reset it
+            cgName = f"{fp.name}-cg"
+            dvComp.add_output(cgName, val=np.array([fp.xRef, fp.yRef, fp.zRef]), units="m")
+            self.connect(cgName, f"{fp.name}.cg")
         else:
             # Give ADflow the aero problem for this procset's flight point and add the angle of attack as a DV
             fp.addDV("alpha", value=fp.alpha, name="aoa", units="deg")

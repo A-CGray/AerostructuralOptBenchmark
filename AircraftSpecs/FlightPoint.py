@@ -19,6 +19,7 @@ class FlightPoint(AeroProblem):
         massConfig: Optional[str] = None,
         failureGroups: Optional[List[str]] = None,
         canUseVLM: Optional[bool] = False,
+        CGFraction: float = 0.5,
         **kwargs,
     ):
         """Define a flight condition, this is basically just an AeroProblem with a few extra attributes
@@ -35,6 +36,9 @@ class FlightPoint(AeroProblem):
             Name of the mass configuration to use for this flight point, if not supplied then the aircraft mass is computed based on the fuel fraction
         failureGroups : list of strings
             Names of wingbox component groups for which to compute a failure constraint value at this flight point
+        CGFraction : float, optional
+            Where the centre of gravity is between the forward (0.0) and aft (1.0) CG limits, by default 0.5. It is
+            not bounded, so a point can be run with its CG outside the nominal range
         """
         super().__init__(name=name, **kwargs)
 
@@ -45,6 +49,7 @@ class FlightPoint(AeroProblem):
         self.massConfig = massConfig
         self.failureGroups = failureGroups
         self.canUseVLM = canUseVLM
+        self.CGFraction = CGFraction
 
 
 class LoadCase:

@@ -26,6 +26,7 @@ from stl import mesh
 # ==============================================================================
 THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(THIS_FILE_DIR, ".."))
+from AircraftSpecs.FlightPoint import FlightPoint  # noqa: E402
 from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
 from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 from geometry.wingGeometry import wingGeometry  # noqa: E402
@@ -49,6 +50,27 @@ def getAircraftSpecs():
 
 def getFlightPointSet(name: str) -> list:
     return flightPointSets[name]
+
+
+def setMomentReferenceToCG(flightPoint: FlightPoint) -> None:
+    """Put a flight point's moment reference point at its centre of gravity
+
+    The CG is fixed in space: it lies between the forward and aft CG limits of the baseline wing, at the flight
+    point's ``CGFraction``, on the symmetry plane and in the wing root chord plane. Planform design variables move the
+    wing relative to it.
+
+    Parameters
+    ----------
+    flightPoint : FlightPoint
+        Flight point whose ``xRef``, ``yRef`` and ``zRef`` are set
+    """
+    forwardCGX = wingGeometry["wing"]["forwardCGX"]
+    aftCGX = wingGeometry["wing"]["aftCGX"]
+    flightPoint.xRef = forwardCGX + flightPoint.CGFraction * (aftCGX - forwardCGX)
+    # The spanwise position doesn't affect the pitching moment of the symmetric half-model
+    flightPoint.yRef = 0.0
+    # The wing root chord plane
+    flightPoint.zRef = 0.0
 
 
 def getAeroMeshPath(level: int, useVLM: Optional[bool] = False) -> str:

@@ -22,6 +22,13 @@ Definition of MACH Tutorial wing flight points
 from .FlightPoint import FlightPoint, LoadCase
 
 # ==============================================================================
+# CG locations, as a fraction of the way from the forward CG limit to the aft one
+# ==============================================================================
+CRUISE_CG_FRACTION = 0.5
+# Use the conservative forward CG wherever the wing is critically loaded (manoeuvres and buffet)
+FORWARD_CG_FRACTION = 0.0
+
+# ==============================================================================
 # Cruise conditions
 # ==============================================================================
 # Standard cruise condition taken from https://en.wikipedia.org/wiki/Boeing_717#Specifications
@@ -34,6 +41,7 @@ standardCruise = FlightPoint(
     mach=CRUISE_MACH,
     altitude=CRUISE_ALTITUDE,
     alpha=3.25,
+    CGFraction=CRUISE_CG_FRACTION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -59,6 +67,7 @@ buffetHighLift = FlightPoint(
     mach=MMO,
     altitude=MAX_ALTITUDE,
     alpha=6.5,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
 )
 buffetHighSpeed = FlightPoint(
@@ -69,6 +78,7 @@ buffetHighSpeed = FlightPoint(
     mach=MMO + 0.07,
     altitude=MAX_ALTITUDE,
     alpha=4.25,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
 )
 
@@ -91,6 +101,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
     mach=SEALEVEL_VA_MACH,
     altitude=MANEUVER_ALTITUDE,
     alpha=8.7,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "drag", "cl", "cd"],
     canUseVLM=True,
 )
@@ -103,6 +114,7 @@ seaLevelLowSpeedPushDown = FlightPoint(
     mach=SEALEVEL_VA_MACH,
     altitude=MANEUVER_ALTITUDE,
     alpha=-5.8,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "drag", "cl", "cd"],
     canUseVLM=True,
 )
@@ -126,6 +138,7 @@ highAltHighSpeedPullUp = FlightPoint(
     mach=MMO + 0.07,
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=5.0,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -137,6 +150,7 @@ highAltHighSpeedPushDown = FlightPoint(
     mach=CRUISE_MACH,
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=-5.8,
+    CGFraction=FORWARD_CG_FRACTION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
