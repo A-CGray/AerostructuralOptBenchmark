@@ -6,7 +6,26 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../
 from wingGeometry import wingGeometry  # noqa: E402
 
 
-def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[bool] = False):
+def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[bool] = False, isOverset: bool = False):
+    """Get the ADflow options shared by every script
+
+    Parameters
+    ----------
+    meshFile : str
+        Path to the volume mesh
+    outputDir : str
+        Directory ADflow writes its solution files to
+    aerostructural : bool, optional
+        Whether ADflow is part of an aerostructural analysis, which needs looser convergence tolerances, by default
+        False
+    isOverset : bool, optional
+        Whether the mesh is an overset mesh, by default False
+
+    Returns
+    -------
+    dict
+        ADflow options
+    """
     aero_options = {
         # I/O Parameters
         "gridFile": meshFile,
@@ -18,7 +37,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
             "resturb",
             "cl",
             "cd",
-            "yplus",
+            "cmy",
             "sepsensor",
         ],
         "surfaceVariables": [
@@ -89,10 +108,15 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "adjointL2Convergence": 1e-14,
         "restartAdjoint": True,
         "ADPC": False,
-        "useMatrixFreedrdw": False,  # Uses an assembled matrix for the adjoint solves, takes some time to build but then each adjoint solve is faster
+        # The assembled dRdW matrix takes some time to build but then each adjoint solve is faster. On overset meshes
+        # it gives wrong gradients with no warning, so they have to use the matrix-free form
+        "useMatrixFreedrdw": isOverset,
         "ILUFill": 2,  # 2 gave faster coupled adjoint solves than 3
         # force integration
         "forcesAsTractions": False,  # Because we're using MELD not RLT
+        # Overset parameters, which have no effect on non-overset meshes
+        "useZipperMesh": False,  # No wall surfaces overlap
+        "oversetUpdateMode": "frozen",  # IDWarp warps the whole mesh together, so the connectivity stays valid
         # Separation sensor options
         # Old sepsensor formulation
         "sepSensorOffset": -0.1,
