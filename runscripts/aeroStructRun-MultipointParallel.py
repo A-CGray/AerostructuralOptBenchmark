@@ -494,9 +494,12 @@ def buildRunContext(args: argparse.Namespace, comm: MPI.Intracomm) -> RunContext
     # Scale the mission range
     runAircraftSpecs["range"] *= args.rangeScale
 
-    # Account for additional drag on coarser mesh due to discretisation error, based on the command line aero level
-    if args.aeroLevel > 1:
-        runAircraftSpecs["extraDragCoeff"] -= DRAG_CORRECTION[args.aeroLevel]
+    # Extra drag area of this run, less the additional drag on coarser meshes due to discretisation error, based on
+    # the command line aero level. Levels with no DRAG_CORRECTION entry get no correction. DRAG_CORRECTION is a
+    # coefficient because it corrects ADflow's drag coefficient on its fixed reference area
+    runAircraftSpecs["extraCDA"] = (
+        aircraftSpecs["extraCDAWithTail"] - DRAG_CORRECTION.get(args.aeroLevel, 0.0) * aircraftSpecs["refArea"]
+    )
 
     # Define the output directory
     outputDir = os.path.join(OUTPUT_PARENT_DIR, args.output)

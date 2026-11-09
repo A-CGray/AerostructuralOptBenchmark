@@ -120,6 +120,8 @@ dragProb.set_val("ac|geom|nacelle|S_wet", wingGeometry["nacelle"]["area"])
 dragProb.set_val("ac|propulsion|num_engines", 2)
 dragProb.run_model()
 EXTRA_DRAG_COEFF = dragProb.get_val("CD0")[0]
+# The horizontal tail's share of EXTRA_DRAG_COEFF
+CD_HSTAB = dragProb.get_val("drag_coeffs.CD_hstab")[0]
 
 aircraftSpecs = {
     "refArea": REF_AREA,
@@ -131,7 +133,9 @@ aircraftSpecs = {
     "reserveFuelMass": RESERVE_FUEL_MASS,
     "wingboxFuelVolumeFraction": WINGBOX_FUEL_VOLUME_FRACTION,
     "auxFuelVolume": AUX_FUEL_VOLUME,
-    "extraDragCoeff": EXTRA_DRAG_COEFF,
+    # Extra drag areas of the half model in m^2 (drag coefficient times the half-wing REF_AREA)
+    "extraCDAWithTail": EXTRA_DRAG_COEFF * REF_AREA,  # Includes horizontal tail drag, used without --includeTail
+    "extraCDAWithoutTail": (EXTRA_DRAG_COEFF - CD_HSTAB) * REF_AREA,  # Excludes it, used with --includeTail
     "tsfc": TSFC,
     "maxThrustPerEngine": MAX_THRUST_PER_ENGINE,
     "fuelDensity": FUEL_DENSITY,

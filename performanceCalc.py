@@ -213,15 +213,14 @@ class MidSegmentMassComp(om.ExplicitComponent):
         )
 
 
-def computeCorrectedDrag(drag, extraDragCoeff, wingArea, dynPressure):
-    return drag + extraDragCoeff * wingArea * dynPressure
+def computeCorrectedDrag(drag, extraCDA, dynPressure):
+    return drag + extraCDA * dynPressure
 
 
 # --- Lift and drag calculations ---
 class CorrectedDragComp(om.ExplicitComponent):
     def initialize(self):
-        self.options.declare("extraDragCoeff", types=float, desc="Extra drag coefficient")
-        self.options.declare("wingArea", types=float, desc="Wing area")
+        self.options.declare("extraCDA", types=float, desc="Extra drag area (drag coefficient times area), in m^2")
         self.options.declare("dynPressure", types=float, desc="Dynamic pressure")
 
     def setup(self):
@@ -234,8 +233,7 @@ class CorrectedDragComp(om.ExplicitComponent):
     def compute(self, inputs, outputs):
         outputs["correctedDrag"] = computeCorrectedDrag(
             drag=inputs["drag"],
-            extraDragCoeff=self.options["extraDragCoeff"],
-            wingArea=self.options["wingArea"],
+            extraCDA=self.options["extraCDA"],
             dynPressure=self.options["dynPressure"],
         )
         # if self.comm.rank == 0:
@@ -412,8 +410,7 @@ class FuelBurnGroup(om.Group):
 
         # --- Drag correction ---
         addedDragComp = CorrectedDragComp(
-            extraDragCoeff=self.specs["extraDragCoeff"],
-            wingArea=self.specs["refArea"],
+            extraCDA=self.specs["extraCDA"],
             dynPressure=self.flightPoint.q,
         )
         self.add_subsystem(
