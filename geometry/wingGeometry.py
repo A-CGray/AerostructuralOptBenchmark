@@ -11,6 +11,7 @@ Baseline geometry definition
 # ==============================================================================
 # Standard Python modules
 # ==============================================================================
+import os
 
 # ==============================================================================
 # External Python modules
@@ -214,6 +215,32 @@ hTailGeoData["taperRatio"] = hTailTaperRatio
 
 hTailGeoData["QFactor"] = Q_TAIL
 hTailGeoData["toverc"] = TAIL_THICKNESS
+
+# --- Hinge line ---
+# The whole tail rotates about a hinge line parallel to the span, copying the MD-80/717 arrangement: the stabiliser
+# hangs from hinges at its rear spar and a jackscrew moves its leading edge. The line passes below the lower skin of
+# the root section at the rear spar
+hTailRearSparFrac = 0.65  # Normalised chordwise location of the tail's rear spar, matching the wing's TESparFrac
+hTailHingeOffsetBelowSkin = 2 * in2m  # Distance of the hinge line below the lower skin in metres
+
+# Profile files hold normalised (x, z) points running around the section from one trailing edge to the other, so the
+# lower surface is whichever side of the leading edge has the lower mean height
+hTailRootProfile = np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), hTailSectionProfiles[0]))
+hTailRootLEIndex = np.argmin(hTailRootProfile[:, 0])
+hTailRootLowerSurface = min(
+    hTailRootProfile[: hTailRootLEIndex + 1], hTailRootProfile[hTailRootLEIndex:], key=lambda side: np.mean(side[:, 1])
+)
+# np.interp needs the chordwise coordinates in increasing order
+hTailRootLowerSurface = hTailRootLowerSurface[np.argsort(hTailRootLowerSurface[:, 0])]
+hTailRearSparLowerSkinHeight = hTailSectionChord[0] * np.interp(
+    hTailRearSparFrac, hTailRootLowerSurface[:, 0], hTailRootLowerSurface[:, 1]
+)
+hTailGeoData["hingeLineCoords"] = np.array(  # (x, z) of the hinge line in metres
+    [
+        hTailSectionChordwiseOffset[0] + hTailRearSparFrac * hTailSectionChord[0],
+        hTailVerticalOffset + hTailRearSparLowerSkinHeight - hTailHingeOffsetBelowSkin,
+    ]
+)
 
 vTailRootChord = 15.3 * 0.3048
 vTailTipChord = 12.12 * 0.3048
