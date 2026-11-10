@@ -110,16 +110,20 @@ def writeMultiBlockFFD(blockFiles: list[str], outFile: str) -> None:
     Raises
     ------
     ValueError
-        If a file doesn't hold exactly as many values as its header describes
+        If a file's header is incomplete or the file doesn't hold exactly as many values as its header describes
     """
     blockSizes = []
     blockCoords = []
     for blockFile in blockFiles:
         with open(blockFile) as f:
             values = f.read().split()
+        if len(values) == 0:
+            raise ValueError(f"{blockFile} is empty")
         numBlocks = int(values[0])
         # The header is the number of blocks followed by the three sizes of each block
         numValuesRead = 1 + NUM_SPATIAL_DIMS * numBlocks
+        if len(values) < numValuesRead:
+            raise ValueError(f"{blockFile} ends before the sizes of its {numBlocks} blocks")
         fileBlockSizes = [values[ii : ii + NUM_SPATIAL_DIMS] for ii in range(1, numValuesRead, NUM_SPATIAL_DIMS)]
         for blockSize in fileBlockSizes:
             numCoords = NUM_SPATIAL_DIMS * int(blockSize[0]) * int(blockSize[1]) * int(blockSize[2])
