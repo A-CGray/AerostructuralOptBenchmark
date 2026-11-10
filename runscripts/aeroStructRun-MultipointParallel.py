@@ -866,6 +866,11 @@ def addAeroOutputs(solver, includeTail: bool) -> None:
 SEP_SENSOR_FUNC_PREFIX = "sepsensor"
 
 
+def getPitchMomentName(fpName: str) -> str:
+    """Get the name of a flight point's pitching moment output, e.g. "cruise_PitchMoment" for the cruise point"""
+    return f"{fpName}_PitchMoment"
+
+
 # Now we can create the MPhys model for each flight point
 class AnalysisPoint(Multipoint):
     def initialize(self):
@@ -917,6 +922,8 @@ class AnalysisPoint(Multipoint):
         self._addScenario(disciplineVariables)
         if ctx.isAeroStruct:
             self._addAeroForceOutputs()
+            if ctx.args.includeTail:
+                self._addPitchMomentOutput()
             self._addPerformanceGroups()
 
     def configure(self):
@@ -1135,6 +1142,48 @@ class AnalysisPoint(Multipoint):
             )
             self.connect(inputName, f"{outputName}CorrectionComp.F")
             self._declarePerformanceOutput(getAeroForceName(self.fpName, outputName))
+
+    def _addPitchMomentOutput(self) -> None:
+        """Add the pitching moment output, ``<flight point name>_PitchMoment``, for runs with the tail
+
+        The output is the half model's pitching moment in N*m, positive nose-up, which the trim constraint drives to
+        zero. It is taken about the flight point's CG, which lies between the forward and aft CG limits at the flight
+        point's ``CGFraction``, on the symmetry plane and in the wing root chord plane (see ``setMomentReferenceToCG``).
+        Only the wing and tail aerodynamic moments are included: the fuselage, nacelle and thrust moments are ignored.
+        It is a moment rather than a coefficient because ADflow's cmy and OpenAeroStruct's CM are normalised
+        differently, and the lift constraint is dimensional too.
+
+        There is no static margin constraint, so with planform DVs but without ``--addPlanformCons`` nothing keeps the
+        wing's MAC bracketing the CG limits.
+        """
+        ctx = self.options["ctx"]
+
+        if ctx.usingVLM:
+            # OpenAeroStruct's moment vector is for both halves of the symmetric model, about its cg input, and only
+            # its pitching (spanwise) component is non-zero
+            scaleFactor = 0.5
+            momentUnits = "N*m"
+            momentSource = f"{self.fpName}.total_perf.moment.M"
+            srcIndices = [SPAN_INDEX]
+        else:
+            # ADflow's my is the half model's pitching moment about the AeroProblem's reference point. It is in N*m,
+            # but MPhys gives it no units, so the input has none either
+            scaleFactor = 1.0
+            momentUnits = None
+            momentSource = f"{self.fpName}.aero_post.my"
+            srcIndices = None
+
+        pitchMomentName = getPitchMomentName(self.fpName)
+        self.add_subsystem(
+            "PitchMomentComp",
+            om.ExecComp(
+                f"{pitchMomentName} = {scaleFactor} * M",
+                M={"units": momentUnits},
+                **{pitchMomentName: {"units": "N*m"}},
+            ),
+            promotes_outputs=["*"],
+        )
+        self.connect(momentSource, "PitchMomentComp.M", src_indices=srcIndices)
 
     def _addPerformanceGroups(self) -> None:
         """Set up the performance calculations"""
