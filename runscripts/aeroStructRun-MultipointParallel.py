@@ -1326,6 +1326,10 @@ class AnalysisPoint(Multipoint):
         geometryComp = self.geometry
         dvComp = self.dvs
 
+        # With the tail, every aerostructural flight point gets its own tail rotation DV. Structural-only load cases
+        # get none, so their tail FFD block carries no DV
+        tailRotationPoint = ctx.localFlightPoint if ctx.args.includeTail and ctx.isAeroStruct else None
+
         # Setup the geometric DVs and constraints, we only need to compute the geometric constraints (LE radius,
         # thickness, area etc) on one proc set
         geometryComp.nom_setConstraintSurface(getTriangulatedSurface())
@@ -1340,6 +1344,7 @@ class AnalysisPoint(Multipoint):
             addGeoConstraints=ctx.ptID == 0 and ctx.settings.doAddGeoConstraints,
             computeRibBayVolumes=True,
             computeToC=ctx.isCruisePoint,
+            tailRotationPoint=tailRotationPoint,
         )
 
         DVCon = self.geometry.nom_getDVCon()
