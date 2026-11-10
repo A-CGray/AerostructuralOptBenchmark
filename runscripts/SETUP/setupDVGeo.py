@@ -129,6 +129,7 @@ def setupDVGeo(
     addGeoConstraints=None,
     computeRibBayVolumes=True,
     computeToC=False,
+    tailRotationPoint: FlightPoint | None = None,
 ):
     if geoCompName is None:
         geoCompName = "geometry"
@@ -356,6 +357,25 @@ def setupDVGeo(
         top.connect(dvName, f"{geoCompName}.{dvName}")
         if addGeoDVs:
             top.add_design_var(dvName, lower=-0.5, upper=0.5, scaler=dvScaleFactor * 1)
+
+    # The horizontal tail's rotation about its hinge line, for runs with the tail (tailRotationPoint is None without
+    # it). It is a design variable whatever args and addGeoDVs are, so that every task, trim included, can use it
+    if tailRotationPoint is not None:
+        dvName = getTailRotationDVName(tailRotationPoint)
+        DVGeoComp.nom_addRefAxis(TAIL_AXIS_NAME, curve=createTailHingeCurve(), volumes=[TAIL_FFD_VOLUME])
+        DVGeoComp.nom_addGlobalDV(dvName=dvName, value=tailRotationPoint.tailRotation, func=rotateTail)
+        try:
+            dvComponent.add_output(dvName, val=tailRotationPoint.tailRotation, units="deg")
+        except ValueError:
+            pass
+        top.connect(dvName, f"{geoCompName}.{dvName}")
+        top.add_design_var(
+            dvName,
+            lower=TAIL_ROTATION_LOWER,
+            upper=TAIL_ROTATION_UPPER,
+            scaler=TAIL_ROTATION_SCALER,
+            units="deg",
+        )
 
     # ==============================================================================
     # Set up the DVConstraints
