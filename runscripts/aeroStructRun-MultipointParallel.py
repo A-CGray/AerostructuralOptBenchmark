@@ -61,7 +61,7 @@ from pyoptsparse import Optimization, OPT
 # ==============================================================================
 import SETUP.setupTACS as setupTACS
 from SETUP.setupDVGeo import setupDVGeo
-from SETUP.setupADflow import getADflowOptions, WING_FAMILY, WING_ONLY_WALL_FAMILY
+from SETUP.setupADflow import getADflowOptions, addTailAeroFunctions, WING_FAMILY, HTAIL_FAMILY, WING_ONLY_WALL_FAMILY
 from SETUP.setupIDWarp import getIDWarpOptions
 from SETUP.setupWimpress import setupWimpress, PlanformConGroup, PLANFORM_CON_INPUT_NAMES
 from CommonArgs import parser
@@ -121,6 +121,7 @@ np.set_printoptions(precision=16, linewidth=200)
 SPAN_INDEX = wingGeometry["spanIndex"]
 INDEX_STRINGS = ["x", "y", "z"]
 WING_SEMISPAN = wingGeometry["wing"]["semiSpan"]
+HTAIL_SEMISPAN = wingGeometry["hTail"]["semiSpan"]
 
 # Flow conditions that OpenAeroStruct reads from inputs instead of the AeroProblem:
 # (input name suffix, FlightPoint attribute, units)
@@ -819,21 +820,37 @@ def createLoadTransferBuilder(ctx: RunContext, aeroBuilder, structBuilder) -> Me
 # --- Spanwise lift distribution and slice file output for the ADflow solvers ---
 LIFT_DISTRIBUTION_NUM_POINTS = 100
 NUM_SLICES = 51
+NUM_TAIL_SLICES = 21
 SLICE_ROOT_POSITION = 1e-5
 SLICE_TIP_SPAN_FRACTION = 0.99
 
 
-def addAeroOutputs(solver) -> None:
-    """Add the spanwise lift distribution and the spanwise slices to an ADflow solver's output files
+def addAeroOutputs(solver, includeTail: bool) -> None:
+    """Add the spanwise lift distributions and the spanwise slices to an ADflow solver's output files
+
+    With the tail, the lift distributions of the wing, the tail and both together (labelled allWalls) are added in that
+    order, so the wing's stays the first zone of the file, and the wing and the tail are sliced separately, so that no
+    slice cuts through both.
 
     Parameters
     ----------
     solver : adflow.ADFLOW
         ADflow solver to add the outputs to
+    includeTail : bool
+        Whether the solver's mesh includes the horizontal tail
     """
-    solver.addLiftDistribution(LIFT_DISTRIBUTION_NUM_POINTS, INDEX_STRINGS[SPAN_INDEX])
+    sliceDirection = INDEX_STRINGS[SPAN_INDEX]
     slicePositions = np.linspace(SLICE_ROOT_POSITION, WING_SEMISPAN * SLICE_TIP_SPAN_FRACTION, NUM_SLICES)
-    solver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
+    if includeTail:
+        # A group name of None means every wall
+        for groupName in [WING_FAMILY, HTAIL_FAMILY, None]:
+            solver.addLiftDistribution(LIFT_DISTRIBUTION_NUM_POINTS, sliceDirection, groupName=groupName)
+        solver.addSlices(sliceDirection, slicePositions, groupName=WING_FAMILY)
+        tailSlicePositions = np.linspace(SLICE_ROOT_POSITION, HTAIL_SEMISPAN * SLICE_TIP_SPAN_FRACTION, NUM_TAIL_SLICES)
+        solver.addSlices(sliceDirection, tailSlicePositions, groupName=HTAIL_FAMILY)
+    else:
+        solver.addLiftDistribution(LIFT_DISTRIBUTION_NUM_POINTS, sliceDirection)
+        solver.addSlices(sliceDirection, slicePositions)
 
 
 # Prefix of the names of ADflow's separation sensor functions (sepsensor, sepsensorksarea, ...)
@@ -925,10 +942,13 @@ class AnalysisPoint(Multipoint):
             for funcName in ctx.localFlightPoint.evalFuncs:
                 if funcName.startswith(SEP_SENSOR_FUNC_PREFIX):
                     self.aeroSolver.addFunction(funcName, ctx.wingFamily, name=funcName)
+            # The pitching moment and the wing and tail shares of the coefficients
+            if ctx.args.includeTail:
+                addTailAeroFunctions(self.aeroSolver, ctx.localFlightPoint)
 
         # Add lift distribution and slice file output
         if not ctx.args.noFiles and self.aeroSolver is not None:
-            addAeroOutputs(self.aeroSolver)
+            addAeroOutputs(self.aeroSolver, ctx.args.includeTail)
 
     def _addStructDiscipline(self, builders: dict, disciplineVariables: dict) -> None:
         """Set up the TACS structural discipline"""
@@ -1385,7 +1405,7 @@ class AnalysisPoint(Multipoint):
                     self.dummyAeroSolver.setDVGeo(geometryComp.nom_getDVGeo())
                     mesh = USMesh(options=self.aeroSolver.mesh.options, comm=self.comm)
                     self.dummyAeroSolver.setMesh(mesh)
-                    addAeroOutputs(self.dummyAeroSolver)
+                    addAeroOutputs(self.dummyAeroSolver, ctx.args.includeTail)
                     # In order to get solution files that don't contain NaNs that break tecplot, we need to actually run the
                     # solver, so we can just set the iteration limit to 0 so that the solver just does it's initialisation
                     # steps and doesn't actually waste any time solving.

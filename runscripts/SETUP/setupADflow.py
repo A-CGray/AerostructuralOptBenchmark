@@ -134,3 +134,30 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "sepSensorKsPhi": 60.0,
     }
     return aero_options
+
+
+def addTailAeroFunctions(solver, flightPoint) -> None:
+    """Add the pitching moment and the wing and tail shares of the force coefficients to a flight point's functions
+
+    The flight point definitions don't list these functions because those must also work on the wing-only mesh, which
+    has no wing or tail family. The per-family functions are registered with the solver, and every function is
+    appended to the flight point's ``evalFuncs``.
+
+    Parameters
+    ----------
+    solver : adflow.ADFLOW
+        ADflow solver whose mesh has the WING_FAMILY and HTAIL_FAMILY walls
+    flightPoint : FlightPoint
+        Flight point to add the functions to, whose moments are taken about its ``xRef``, ``yRef`` and ``zRef``
+    """
+    # The wing + tail pitching moment and its coefficient, which ADflow already defines over every wall
+    newFuncNames = ["my", "cmy"]
+    perFamilyFuncNames = ["cl", "cmy"]
+    # Only points that already compute the total drag coefficient get its split
+    if "cd" in flightPoint.evalFuncs:
+        perFamilyFuncNames.append("cd")
+    for funcName in perFamilyFuncNames:
+        for family in [WING_FAMILY, HTAIL_FAMILY]:
+            # Registered as <funcName>_<family>, e.g. cl_wing
+            newFuncNames.append(solver.addFunction(funcName, family))
+    flightPoint.evalFuncs += newFuncNames
