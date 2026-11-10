@@ -31,6 +31,18 @@ spanIndex = wingGeometry["spanIndex"]
 chordIndex = wingGeometry["chordIndex"]
 verticalIndex = wingGeometry["verticalIndex"]
 
+# How far the rounded tip cap of the CFD tail mesh reaches outboard of the tail's semi-span, in metres. It is measured
+# from aero/WithTail/htail_surf_S1.cgns (max y of 5.6218 against a semi-span of 5.6) because the cap exists only in
+# the ICEM CFD mesh, not in the OML built here. tests/test_tailFFD.py fails if the mesh is remade with a longer cap
+HTAIL_TIP_CAP_REACH = 0.0218
+# Spanwise coordinate of the tail FFD's root face in metres. It is not zero because the tail's symmetry-plane nodes
+# are at |y| <= 1e-17 and round-off could leave them just outside a face at zero
+HTAIL_FFD_ROOT_FACE_Y = -1e-5
+# Distance of the tail FFD's tip face outboard of the tip cap in metres
+HTAIL_FFD_TIP_CLEARANCE = 1e-3
+# Number of spanwise sections of an FFD whose spanwise edges are straight lines
+NUM_STRAIGHT_FFD_SECTIONS = 2
+
 
 def generateOML(partName: str):
     airfoilFiles = [
@@ -81,6 +93,47 @@ def generateVLMMesh(
     vlmMesh = np.flip(vlmMesh, 1)
     np.save(f"../aero/{meshName}.npy", vlmMesh)
     writeOASMesh(vlmMesh, f"{meshName}.dat")
+
+
+def extendFFDSpanwise(ffdFile: str, rootFaceY: float, tipFaceY: float):
+    """Move the root and tip faces of an FFD written by createFittedWingFFD to given spanwise positions
+
+    Each node of the two faces slides along the straight spanwise edge of the FFD it lies on, so the other four faces
+    of the box stay in their planes. The file is overwritten.
+
+    Parameters
+    ----------
+    ffdFile : str
+        Plot3d file holding one FFD block with two spanwise sections, the spanwise direction being the block's second
+        index
+    rootFaceY : float
+        Spanwise coordinate to put the root face at
+    tipFaceY : float
+        Spanwise coordinate to put the tip face at
+    """
+    with open(ffdFile) as f:
+        values = f.read().split()
+    numBlocks = int(values[0])
+    ffdSize = [int(numNodes) for numNodes in values[1:4]]
+    if numBlocks != 1 or ffdSize[1] != NUM_STRAIGHT_FFD_SECTIONS:
+        raise ValueError(f"{ffdFile} must hold one block with {NUM_STRAIGHT_FFD_SECTIONS} spanwise sections")
+    # Plot3d files list every x coordinate, then every y, then every z, each with the first index running fastest
+    ffdCoords = np.array(values[4:], dtype=float).reshape((*ffdSize, 3), order="F")
+
+    rootCoords = ffdCoords[:, 0].copy()
+    edgeVectors = ffdCoords[:, -1] - rootCoords
+    for sectionIndex, faceY in [(0, rootFaceY), (-1, tipFaceY)]:
+        edgeFractions = (faceY - rootCoords[..., spanIndex]) / edgeVectors[..., spanIndex]
+        ffdCoords[:, sectionIndex] = rootCoords + edgeFractions[..., np.newaxis] * edgeVectors
+
+    # The same layout as createFittedWingFFD writes, without its trailing spaces
+    with open(ffdFile, "w") as f:
+        f.write("1\n")
+        f.write(f"{ffdSize[0]} {ffdSize[1]} {ffdSize[2]}\n")
+        for dim in range(3):
+            for kk in range(ffdSize[2]):
+                for jj in range(ffdSize[1]):
+                    f.write(" ".join("%.15f" % coord for coord in ffdCoords[:, jj, kk, dim]) + "\n")
 
 
 parser = argparse.ArgumentParser()
@@ -239,10 +292,11 @@ tailFFDTEList[:, chordIndex] -= 1e-4 * wingGeometry["hTail"]["sectionChord"]
 tailFFDTEList[0, spanIndex] += 1e-4
 tailFFDTEList[-1, spanIndex] -= 1e-4
 
+# There is no spanwise margin, because createFittedWingFFD adds the same margin at the root and the tip and the tail
+# needs different ones. extendFFDSpanwise places the root and tip faces afterwards
 absMargins = np.zeros((3,))
 relMargins = np.zeros((3,))
 absMargins[verticalIndex] = 0.2
-absMargins[spanIndex] = 1e-2
 relMargins[chordIndex] = 0.01
 
 createFittedWingFFD(
@@ -256,4 +310,12 @@ createFittedWingFFD(
     absMargins=absMargins,
     relMargins=relMargins,
     liftIndex=wingGeometry["verticalIndex"] + 1,
+)
+
+# Extend each of the box's four spanwise edges along its own line, so the root face lies just inboard of the symmetry
+# plane and the tip face just outboard of the CFD mesh's tip cap
+extendFFDSpanwise(
+    tailFFDName,
+    rootFaceY=HTAIL_FFD_ROOT_FACE_Y,
+    tipFaceY=wingGeometry["hTail"]["semiSpan"] + HTAIL_TIP_CAP_REACH + HTAIL_FFD_TIP_CLEARANCE,
 )
