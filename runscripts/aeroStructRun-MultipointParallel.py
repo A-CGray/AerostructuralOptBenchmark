@@ -61,7 +61,7 @@ from pyoptsparse import Optimization, OPT
 # ==============================================================================
 import SETUP.setupTACS as setupTACS
 from SETUP.setupDVGeo import setupDVGeo
-from SETUP.setupADflow import getADflowOptions
+from SETUP.setupADflow import getADflowOptions, WING_FAMILY, WING_ONLY_WALL_FAMILY
 from SETUP.setupIDWarp import getIDWarpOptions
 from SETUP.setupWimpress import setupWimpress, PlanformConGroup, PLANFORM_CON_INPUT_NAMES
 from CommonArgs import parser
@@ -96,6 +96,9 @@ from utils import (
     setLocalVals,
     printBanner,
     setMomentReferenceToCG,
+    getTailFFDPath,
+    getTailVLMMeshPath,
+    writeMultiBlockFFD,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -192,6 +195,12 @@ parser.add_argument(
     "--includeBFL",
     action="store_true",
     help="Include the balanced field length constraint",
+    default=False,
+)
+parser.add_argument(
+    "--includeTail",
+    action="store_true",
+    help="Include a rigid horizontal tail in the aero model of every aerostructural flight point",
     default=False,
 )
 parser.add_argument(
@@ -401,8 +410,15 @@ class RunContext:
     # The aero mesh level for this proc's flight point: `--vlmLevel` on VLM procs if given, otherwise `--aeroLevel`
     aeroLevel: int
     structMeshFile: str
+    # The ADflow volume mesh (the overset wing and tail mesh with --includeTail), or the wing's VLM mesh on VLM procs
     aeroMeshFile: str
+    # The wing FFD, or with --includeTail a file in geoOutputDir holding the wing block then the tail block
     ffdFile: str
+    # Name of the wing's surface in the aero model, used for the separation sensor and the MELD body tags: "wing"
+    # with --includeTail, otherwise "wall"
+    wingFamily: str
+    # The tail's VLM mesh on VLM procs with --includeTail, otherwise None
+    tailVLMMeshFile: str | None
     outputDir: str
     geoOutputDir: str
     localOutputDir: str
@@ -496,9 +512,11 @@ def buildRunContext(args: argparse.Namespace, comm: MPI.Intracomm) -> RunContext
 
     # Extra drag area of this run, less the additional drag on coarser meshes due to discretisation error, based on
     # the command line aero level. Levels with no DRAG_CORRECTION entry get no correction. DRAG_CORRECTION is a
-    # coefficient because it corrects ADflow's drag coefficient on its fixed reference area
+    # coefficient because it corrects ADflow's drag coefficient on its fixed reference area. With the tail, the aero
+    # model computes the tail's drag, so the extra drag area leaves it out
+    extraCDAKey = "extraCDAWithoutTail" if args.includeTail else "extraCDAWithTail"
     runAircraftSpecs["extraCDA"] = (
-        aircraftSpecs["extraCDAWithTail"] - DRAG_CORRECTION.get(args.aeroLevel, 0.0) * aircraftSpecs["refArea"]
+        aircraftSpecs[extraCDAKey] - DRAG_CORRECTION.get(args.aeroLevel, 0.0) * aircraftSpecs["refArea"]
     )
 
     # Define the output directory
@@ -544,15 +562,23 @@ def buildRunContext(args: argparse.Namespace, comm: MPI.Intracomm) -> RunContext
     structMeshFile = getStructMeshPath(level=args.structLevel, order=args.structOrder)
 
     aeroLevel = args.vlmLevel if usingVLM and args.vlmLevel is not None else args.aeroLevel
-    aeroMeshFile = getAeroMeshPath(level=aeroLevel, useVLM=usingVLM)
-
-    ffdFile = getFFDPath(level=args.ffdLevel)
+    aeroMeshFile = getAeroMeshPath(level=aeroLevel, useVLM=usingVLM, includeTail=args.includeTail)
+    # ADflow's mesh holds the wing and the tail, OpenAeroStruct models the tail as a second surface with its own mesh
+    tailVLMMeshFile = getTailVLMMeshPath(level=aeroLevel) if args.includeTail and usingVLM else None
+    wingFamily = WING_FAMILY if args.includeTail else WING_ONLY_WALL_FAMILY
 
     # Define the output directories
     geoOutputDir = os.path.join(outputDir, "Geometry")
     localOutputDir = os.path.join(outputDir, localFlightPoint.name)
     localAeroOutputDir = os.path.join(localOutputDir, "aero")
     localStructOutputDir = os.path.join(localOutputDir, "struct")
+
+    # With the tail, every point uses one FFD file holding the wing block then the tail block, which prepareOutputs
+    # writes into the geometry output directory, so the FFD each run used is saved with its outputs
+    if args.includeTail:
+        ffdFile = os.path.join(geoOutputDir, f"wingAndHTail-ffd-{args.ffdLevel}.xyz")
+    else:
+        ffdFile = getFFDPath(level=args.ffdLevel)
 
     # --- Csv files that we will store timing data in ---
     funcTimingFile = os.path.join(localOutputDir, f"{localFlightPoint.name}-FuncTiming.csv")
@@ -573,6 +599,8 @@ def buildRunContext(args: argparse.Namespace, comm: MPI.Intracomm) -> RunContext
         structMeshFile=structMeshFile,
         aeroMeshFile=aeroMeshFile,
         ffdFile=ffdFile,
+        wingFamily=wingFamily,
+        tailVLMMeshFile=tailVLMMeshFile,
         outputDir=outputDir,
         geoOutputDir=geoOutputDir,
         localOutputDir=localOutputDir,
@@ -719,7 +747,9 @@ def createAeroBuilder(ctx: RunContext) -> tuple[object, dict | None]:
         )
         aeroOptions = None
     else:
-        aeroOptions = getADflowOptions(ctx.aeroMeshFile, ctx.localAeroOutputDir, aerostructural=True)
+        aeroOptions = getADflowOptions(
+            ctx.aeroMeshFile, ctx.localAeroOutputDir, aerostructural=True, isOverset=ctx.args.includeTail
+        )
         if ctx.aeroLevel == 3:
             aeroOptions["anksecondordswitchtol"] *= 10
             aeroOptions["rkreset"] = True
@@ -1627,6 +1657,8 @@ def runAnalysesRobustly(
 def prepareOutputs(ctx: RunContext) -> None:
     """Set up the output directories and files, and redirect the stdout of each flight point's root proc
 
+    With the tail, the output files include the combined wing and tail FFD.
+
     Parameters
     ----------
     ctx : RunContext
@@ -1635,6 +1667,12 @@ def prepareOutputs(ctx: RunContext) -> None:
     # Create output directories
     if ctx.globalRank == 0:
         os.makedirs(ctx.geoOutputDir, exist_ok=True)
+        # The wing's block must come first, see setupDVGeo
+        if ctx.args.includeTail:
+            writeMultiBlockFFD([getFFDPath(ctx.args.ffdLevel), getTailFFDPath()], ctx.ffdFile)
+    # Every proc's geometry component reads the combined FFD, so it must be complete first
+    if ctx.args.includeTail:
+        ctx.globalComm.Barrier()
 
     if ctx.ptRank == 0:
         os.makedirs(ctx.localStructOutputDir, exist_ok=True)

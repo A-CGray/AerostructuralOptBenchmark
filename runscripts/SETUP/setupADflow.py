@@ -5,6 +5,14 @@ from typing import Optional
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
+# ADflow lower-cases the family names of the mesh file and looks them up case-sensitively, so these are lower case
+# The only wall family of the wing-only meshes
+WING_ONLY_WALL_FAMILY = "wall"
+# The wall families of the overset wing and horizontal tail meshes, aero/WithTail/combined_vol_L*.cgns, whose CGNS
+# families are wing and hTail
+WING_FAMILY = "wing"
+HTAIL_FAMILY = "htail"
+
 
 def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[bool] = False, isOverset: bool = False):
     """Get the ADflow options shared by every script

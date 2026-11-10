@@ -76,11 +76,34 @@ def setMomentReferenceToCG(flightPoint: FlightPoint) -> None:
     flightPoint.zRef = 0.0
 
 
-def getAeroMeshPath(level: int, useVLM: Optional[bool] = False) -> str:
+def getAeroMeshPath(level: int, useVLM: Optional[bool] = False, includeTail: bool = False) -> str:
+    """Get the path of an aero mesh
+
+    Parameters
+    ----------
+    level : int
+        Mesh level, 1 is the finest
+    useVLM : bool, optional
+        Whether to get the wing's VLM mesh rather than the ADflow volume mesh, by default False
+    includeTail : bool, optional
+        Whether the ADflow mesh includes the horizontal tail, by default False. The VLM mesh is always the wing's,
+        getTailVLMMeshPath gives the tail's
+
+    Returns
+    -------
+    str
+        Path of the mesh file
+    """
     if useVLM:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing-VLMSurf-L{level}.npy")
+    elif includeTail:
+        return os.path.join(THIS_FILE_DIR, f"../aero/WithTail/combined_vol_L{level}.cgns")
     else:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing_vol_L{level}.cgns")
+
+
+def getTailVLMMeshPath(level: int) -> str:
+    return os.path.join(THIS_FILE_DIR, f"../aero/hTail-VLMSurf-L{level}.npy")
 
 
 def getStructMeshPath(level: int, order: int) -> str:
