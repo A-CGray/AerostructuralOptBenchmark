@@ -20,6 +20,7 @@ class FlightPoint(AeroProblem):
         failureGroups: Optional[List[str]] = None,
         canUseVLM: Optional[bool] = False,
         CGFraction: float = 0.5,
+        tailRotation: float = 0.0,
         **kwargs,
     ):
         """Define a flight condition, this is basically just an AeroProblem with a few extra attributes
@@ -39,6 +40,10 @@ class FlightPoint(AeroProblem):
         CGFraction : float, optional
             Where the centre of gravity is between the forward (0.0) and aft (1.0) CG limits, by default 0.5. It is
             not bounded, so a point can be run with its CG outside the nominal range
+        tailRotation : float, optional
+            Initial rotation of the horizontal tail about its hinge line in degrees, positive leading edge up, by
+            default 0.0. It is the starting value of the flight point's tail rotation design variable, as alpha is
+            for the angle of attack, and is only used in runs with the horizontal tail
         """
         super().__init__(name=name, **kwargs)
 
@@ -50,6 +55,7 @@ class FlightPoint(AeroProblem):
         self.failureGroups = failureGroups
         self.canUseVLM = canUseVLM
         self.CGFraction = CGFraction
+        self.tailRotation = tailRotation
 
 
 class LoadCase:
