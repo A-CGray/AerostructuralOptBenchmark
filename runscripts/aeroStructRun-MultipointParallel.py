@@ -1103,14 +1103,16 @@ class AnalysisPoint(Multipoint):
         ctx = self.options["ctx"]
 
         # ADflow and OpenAerostruct don't compute lift and drag in the same way, so we need to fix the outputs
-        # ADflow computes the lift/drag of the single wing, the outputs are not promoted and are called "lift" and "drag"
-        # OpenAerostruct computes the lift and drag for 2 wings, the outputs are promoted and are called "L" and "D"
+        # ADflow computes the lift/drag of the half model, the outputs are not promoted and are called "lift" and "drag"
+        # OpenAerostruct computes the lift and drag for both halves, the outputs are promoted and are called "L" and "D"
+        # With --includeTail, both include the tail's lift and drag as well as the wing's
 
         aeroForces = ["Lift"]
         if ctx.isCruisePoint:
             aeroForces.append("Drag")
 
-        # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the lift/drag of the single wing
+        # To fix this, we'll make an addSubtractComp that will create an output called "lift" and "drag" that is the
+        # lift/drag of the half model
         if ctx.usingVLM:
             scaleFactor = 0.5
             inputNames = [
