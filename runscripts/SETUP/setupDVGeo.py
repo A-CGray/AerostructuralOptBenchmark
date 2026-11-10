@@ -18,6 +18,7 @@ import os
 # External Python modules
 # ==============================================================================
 import numpy as np
+from pyspline import Curve
 
 # ==============================================================================
 # Extension modules
@@ -25,9 +26,22 @@ import numpy as np
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+from AircraftSpecs.FlightPoint import FlightPoint  # noqa: E402
+
 # Index of the wing's block in the FFD file. The wing must be the first block: its reference axis, getLocalIndex and
 # the indexing of the local shape DVs rely on it. A second block, for the horizontal tail, may follow it
 WING_FFD_VOLUME = 0
+# Index of the horizontal tail's block in the FFD file, which follows the wing's
+TAIL_FFD_VOLUME = 1
+# Name of the horizontal tail's reference axis, its hinge line, matching the tail's wall family in the CFD mesh
+TAIL_AXIS_NAME = "hTail"
+# Bounds on the tail rotation in degrees, positive leading edge up: a conservative widening of the MD-80's limits of
+# 12.2 degrees leading edge down and 2.1 degrees leading edge up
+TAIL_ROTATION_LOWER = -15.0
+TAIL_ROTATION_UPPER = 5.0
+# The tail rotation has a fixed scaling, like the angle of attack, rather than one multiplied by --geoScalingFactor
+TAIL_ROTATION_SCALER = 0.1
 
 
 def c_atan2(x, y):
@@ -36,6 +50,72 @@ def c_atan2(x, y):
     c = y.real
     d = y.imag
     return complex(np.arctan2(a, c), (c * b - a * d) / (a**2 + c**2))
+
+
+def getTailRotationDVName(flightPoint: FlightPoint) -> str:
+    """Get the name of a flight point's tail rotation DV, shared by the DVGeo global DV and the OpenMDAO design variable
+
+    Parameters
+    ----------
+    flightPoint : FlightPoint
+        The flight point the tail rotation belongs to
+
+    Returns
+    -------
+    str
+        The DV name, ``<flight point name>_tailRotation``
+    """
+    return f"{flightPoint.name}_tailRotation"
+
+
+def createTailHingeCurve() -> Curve:
+    """Create the horizontal tail's hinge line, the reference axis the tail rotates about
+
+    The hinge line is parallel to y and runs from the symmetry plane to the tail tip through
+    ``wingGeometry["hTail"]["hingeLineCoords"]``.
+
+    Returns
+    -------
+    Curve
+        The hinge line as a straight, linear pySpline curve
+    """
+    # hingeLineCoords holds the hinge line's x and z coordinates
+    hingeX = wingGeometry["hTail"]["hingeLineCoords"][0]
+    hingeZ = wingGeometry["hTail"]["hingeLineCoords"][1]
+    tailSemiSpan = wingGeometry["hTail"]["semiSpan"]
+    return Curve(x=[hingeX, hingeX], y=[0.0, tailSemiSpan], z=[hingeZ, hingeZ], k=2)
+
+
+def rotateTail(val, geo) -> None:
+    """Rotate the horizontal tail rigidly about its hinge line, the function of the tail rotation global DV
+
+    Parameters
+    ----------
+    val : array
+        The tail rotation in degrees, positive leading edge up
+    geo : DVGeometry
+        The DVGeometry object whose tail reference axis is rotated
+    """
+    # Every point of the hinge line gets the same rotation about y, so the tail rotates rigidly. The tail FFD
+    # coefficients beyond the ends of the hinge line attach to its end points, which lie on the same line, so they
+    # rotate rigidly too
+    geo.rot_y[TAIL_AXIS_NAME].coef[:] = val[0]
+
+
+def addTailRotation(DVGeo, flightPoint: FlightPoint) -> None:
+    """Add the horizontal tail's hinge line and a flight point's tail rotation DV to a plain DVGeometry
+
+    ``setupDVGeo`` adds the same reference axis and DV to an OpenMDAO geometry component.
+
+    Parameters
+    ----------
+    DVGeo : DVGeometry
+        DVGeometry object made from an FFD file with the wing block then the tail block
+    flightPoint : FlightPoint
+        The flight point whose tail rotation is added, starting at its ``tailRotation``
+    """
+    DVGeo.addRefAxis(TAIL_AXIS_NAME, curve=createTailHingeCurve(), volumes=[TAIL_FFD_VOLUME])
+    DVGeo.addGlobalDV(getTailRotationDVName(flightPoint), value=flightPoint.tailRotation, func=rotateTail)
 
 
 def setupDVGeo(
