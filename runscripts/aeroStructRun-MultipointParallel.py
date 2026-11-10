@@ -2258,6 +2258,11 @@ def computeDispFuncs(
             "*takeoff.bfl.*",  # Balanced field length speeds and distances
             "*ksFailure",  # TACS failure values
         ]
+        if ctx.args.includeTail:
+            # The lift and drag of each VLM surface. These are forces on the whole aircraft, unlike the half-model lift
+            # and drag outputs. OpenAeroStruct's per-surface CL and CD are left out: each is normalised by its own
+            # surface's area, so they can't be compared with ADflow's cl_htail
+            patterns += [f"*aero_post.{surfaceName}.[LD]" for surfaceName in [ctx.wingFamily, HTAIL_FAMILY]]
         for pattern in patterns:
             if fnmatch.fnmatch(output, pattern):
                 dispFuncs.append(output)
