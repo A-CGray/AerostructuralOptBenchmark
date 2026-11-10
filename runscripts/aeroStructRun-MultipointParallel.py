@@ -733,7 +733,7 @@ def createAeroBuilder(ctx: RunContext) -> tuple[object, dict | None]:
         VLMMesh = np.load(ctx.aeroMeshFile)
         surf_dict = {
             # Wing definition
-            "name": "wall",  # name of the surface
+            "name": ctx.wingFamily,  # name of the surface, which the MELD body tags select the wing by
             "symmetry": True,  # if true, model one half of wing
             "S_ref_type": "wetted",  # how we compute the wing area, can be 'wetted' or 'projected'
             "CL0": 0.0,  # CL of the surface at alpha=0
@@ -745,8 +745,17 @@ def createAeroBuilder(ctx: RunContext) -> tuple[object, dict | None]:
             "with_wave": False,
             "mesh": VLMMesh,
         }
+        surfaces = [surf_dict]
+        if ctx.args.includeTail:
+            # The tail is modelled like the wing and solved in the same VLM system, so OpenAeroStruct's total lift and
+            # drag include it. It comes after the wing because OpenAeroStruct's moment coefficient uses the first
+            # surface's mean aerodynamic chord
+            tailSurfDict = copy.copy(surf_dict)
+            tailSurfDict["name"] = HTAIL_FAMILY
+            tailSurfDict["mesh"] = np.load(ctx.tailVLMMeshFile)
+            surfaces.append(tailSurfDict)
         aeroBuilder = OASBuilder(
-            [surf_dict], options={"compressible": True, "output_dir": ctx.localAeroOutputDir, "write_solution": True}
+            surfaces, options={"compressible": True, "output_dir": ctx.localAeroOutputDir, "write_solution": True}
         )
         aeroOptions = None
     else:
