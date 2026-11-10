@@ -836,6 +836,10 @@ def addAeroOutputs(solver) -> None:
     solver.addSlices(INDEX_STRINGS[SPAN_INDEX], slicePositions)
 
 
+# Prefix of the names of ADflow's separation sensor functions (sepsensor, sepsensorksarea, ...)
+SEP_SENSOR_FUNC_PREFIX = "sepsensor"
+
+
 # Now we can create the MPhys model for each flight point
 class AnalysisPoint(Multipoint):
     def initialize(self):
@@ -913,6 +917,14 @@ class AnalysisPoint(Multipoint):
         self.aeroSolver = None if ctx.usingVLM else aeroBuilder.get_solver()
         builders["aero"] = aeroBuilder
         disciplineVariables["aero"] = MPhysVariables.Aerodynamics.Surface
+
+        if self.aeroSolver is not None:
+            # The buffet constraint uses the separation sensor over the wing only, so each separation sensor function
+            # is redefined, under its own name, to integrate over the wing's wall family alone. The wing-only mesh has
+            # no other wall, so there the values are unchanged
+            for funcName in ctx.localFlightPoint.evalFuncs:
+                if funcName.startswith(SEP_SENSOR_FUNC_PREFIX):
+                    self.aeroSolver.addFunction(funcName, ctx.wingFamily, name=funcName)
 
         # Add lift distribution and slice file output
         if not ctx.args.noFiles and self.aeroSolver is not None:
