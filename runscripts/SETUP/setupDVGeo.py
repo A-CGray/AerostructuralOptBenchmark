@@ -25,6 +25,10 @@ import numpy as np
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../geometry"))
 from wingGeometry import wingGeometry  # noqa: E402
 
+# Index of the wing's block in the FFD file. The wing must be the first block: its reference axis, getLocalIndex and
+# the indexing of the local shape DVs rely on it. A second block, for the horizontal tail, may follow it
+WING_FFD_VOLUME = 0
+
 
 def c_atan2(x, y):
     a = x.real
@@ -59,8 +63,9 @@ def setupDVGeo(
     chordIndex = wingGeometry["chordIndex"]
     verticalIndex = wingGeometry["verticalIndex"]
 
-    # Create reference axis along the leading edge
-    numRefAxPts = DVGeoComp.nom_addRefAxis(name="wing", xFraction=0.00675, alignIndex="j")
+    # Create reference axis along the leading edge of the wing block only. With the one-block wing FFD this is the
+    # same as giving no volumes
+    numRefAxPts = DVGeoComp.nom_addRefAxis(name="wing", xFraction=0.00675, alignIndex="j", volumes=[WING_FFD_VOLUME])
     numRootSections = 3
     numSOBSections = 3
     numMovingSections = numRefAxPts - numRootSections - (numSOBSections)
@@ -217,7 +222,7 @@ def setupDVGeo(
         dvName = "local"
 
         shapes = []
-        ffdLocalInds = DVGeo.getLocalIndex(0)
+        ffdLocalInds = DVGeo.getLocalIndex(WING_FFD_VOLUME)
 
         numChordwisePoints = ffdLocalInds.shape[0]
 
