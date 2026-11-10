@@ -224,17 +224,15 @@ hTailRearSparFrac = 0.65  # Normalised chordwise location of the tail's rear spa
 hTailHingeOffsetBelowSkin = 2 * in2m  # Distance of the hinge line below the lower skin in metres
 
 # Profile files hold normalised (x, z) points running around the section from one trailing edge to the other, so the
-# lower surface is whichever side of the leading edge has the lower mean height
+# lower skin at the rear spar is the lower of the two sides' heights there
 hTailRootProfile = np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), hTailSectionProfiles[0]))
 hTailRootLEIndex = np.argmin(hTailRootProfile[:, 0])
-hTailRootLowerSurface = min(
-    hTailRootProfile[: hTailRootLEIndex + 1], hTailRootProfile[hTailRootLEIndex:], key=lambda side: np.mean(side[:, 1])
-)
-# np.interp needs the chordwise coordinates in increasing order
-hTailRootLowerSurface = hTailRootLowerSurface[np.argsort(hTailRootLowerSurface[:, 0])]
-hTailRearSparLowerSkinHeight = hTailSectionChord[0] * np.interp(
-    hTailRearSparFrac, hTailRootLowerSurface[:, 0], hTailRootLowerSurface[:, 1]
-)
+hTailRearSparSideHeights = []
+for hTailRootSide in [hTailRootProfile[: hTailRootLEIndex + 1], hTailRootProfile[hTailRootLEIndex:]]:
+    # np.interp needs the chordwise coordinates in increasing order
+    hTailRootSortedSide = hTailRootSide[np.argsort(hTailRootSide[:, 0])]
+    hTailRearSparSideHeights.append(np.interp(hTailRearSparFrac, hTailRootSortedSide[:, 0], hTailRootSortedSide[:, 1]))
+hTailRearSparLowerSkinHeight = hTailSectionChord[0] * min(hTailRearSparSideHeights)
 hTailGeoData["hingeLineCoords"] = np.array(  # (x, z) of the hinge line in metres
     [
         hTailSectionChordwiseOffset[0] + hTailRearSparFrac * hTailSectionChord[0],
