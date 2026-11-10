@@ -39,6 +39,9 @@ from performanceCalc import getAeroForceName  # noqa: E402, F401
 # Line printed above and below the banners made by printBanner
 BANNER_LINE = "=" * 79
 
+# Number of spatial dimensions, so the number of sizes and of coordinate lists each plot3d block has
+NUM_SPATIAL_DIMS = 3
+
 
 def getGeometryData():
     return wingGeometry
@@ -86,6 +89,52 @@ def getStructMeshPath(level: int, order: int) -> str:
 
 def getFFDPath(level: str):
     return os.path.join(THIS_FILE_DIR, f"../geometry/wing-ffd-advanced-{level}.xyz")
+
+
+def getTailFFDPath() -> str:
+    return os.path.join(THIS_FILE_DIR, "../geometry/hTail-ffd.xyz")
+
+
+def writeMultiBlockFFD(blockFiles: list[str], outFile: str) -> None:
+    """Write one plot3d file holding the blocks of several plot3d files, in order
+
+    The values are copied as text, so every block of the output file is exactly the block that was read.
+
+    Parameters
+    ----------
+    blockFiles : list[str]
+        Paths of the ASCII plot3d files to combine, each holding one or more blocks
+    outFile : str
+        Path of the plot3d file to write
+
+    Raises
+    ------
+    ValueError
+        If a file doesn't hold exactly as many values as its header describes
+    """
+    blockSizes = []
+    blockCoords = []
+    for blockFile in blockFiles:
+        with open(blockFile) as f:
+            values = f.read().split()
+        numBlocks = int(values[0])
+        # The header is the number of blocks followed by the three sizes of each block
+        numValuesRead = 1 + NUM_SPATIAL_DIMS * numBlocks
+        fileBlockSizes = [values[ii : ii + NUM_SPATIAL_DIMS] for ii in range(1, numValuesRead, NUM_SPATIAL_DIMS)]
+        for blockSize in fileBlockSizes:
+            numCoords = NUM_SPATIAL_DIMS * int(blockSize[0]) * int(blockSize[1]) * int(blockSize[2])
+            blockSizes.append(blockSize)
+            blockCoords.append(values[numValuesRead : numValuesRead + numCoords])
+            numValuesRead += numCoords
+        if numValuesRead != len(values):
+            raise ValueError(f"{blockFile} holds {len(values)} values but its header describes {numValuesRead}")
+
+    with open(outFile, "w") as f:
+        f.write(f"{len(blockSizes)}\n")
+        for blockSize in blockSizes:
+            f.write(" ".join(blockSize) + "\n")
+        for coords in blockCoords:
+            f.write("\n".join(coords) + "\n")
 
 
 def getTriangulatedSurface():
