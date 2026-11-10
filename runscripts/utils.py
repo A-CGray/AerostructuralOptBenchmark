@@ -42,6 +42,11 @@ BANNER_LINE = "=" * 79
 # Number of spatial dimensions, so the number of sizes and of coordinate lists each plot3d block has
 NUM_SPATIAL_DIMS = 3
 
+# Values of the aerostructural runscript's --transferTo option, which picks the structural nodes MELD transfers loads to
+TRANSFER_TO_OPTIONS = ["all", "skin", "skin+spar", "skin+ribends"]
+# MELD body tag meaning every structural node except the Lagrange multiplier nodes of the RBEs
+ALL_STRUCT_NODES_TAG = -1
+
 
 def getGeometryData():
     return wingGeometry
@@ -162,6 +167,44 @@ def writeMultiBlockFFD(blockFiles: list[str], outFile: str) -> None:
             f.write(" ".join(blockSize) + "\n")
         for coords in blockCoords:
             f.write("\n".join(coords) + "\n")
+
+
+def getMeldBodyTags(transferTo: str, wingFamily: str, includeTail: bool) -> list[dict] | None:
+    """Work out the MELD body tags, which pick the aero and structural nodes that loads and displacements pass between
+
+    Only the wing's aero nodes are tagged, so with the tail the untagged tail nodes get no displacement and their loads
+    are dropped, which keeps the tail rigid.
+
+    Parameters
+    ----------
+    transferTo : str
+        Which structural nodes to transfer loads to, one of TRANSFER_TO_OPTIONS
+    wingFamily : str
+        Name of the wing's surface in the aero model
+    includeTail : bool
+        Whether the aero model includes the horizontal tail
+
+    Returns
+    -------
+    list[dict] or None
+        The tags of a single body, as new lists on every call so they can be changed in place, or None to couple every
+        aero node to every structural node
+
+    Raises
+    ------
+    ValueError
+        If transferTo is not one of TRANSFER_TO_OPTIONS
+    """
+    if transferTo == "all":
+        if includeTail:
+            return [{"aero": [wingFamily], "struct": ALL_STRUCT_NODES_TAG}]
+        return None
+    # The rib-spar intersection nodes are added to the skin+ribends body once the structural model exists
+    if transferTo in ["skin", "skin+ribends"]:
+        return [{"aero": [wingFamily], "struct": ["SKIN"]}]
+    if transferTo == "skin+spar":
+        return [{"aero": [wingFamily], "struct": ["SKIN", "SPAR"]}]
+    raise ValueError(f"transferTo must be one of {TRANSFER_TO_OPTIONS}, not {transferTo!r}")
 
 
 def getTriangulatedSurface():

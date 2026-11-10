@@ -99,6 +99,8 @@ from utils import (
     getTailFFDPath,
     getTailVLMMeshPath,
     writeMultiBlockFFD,
+    getMeldBodyTags,
+    TRANSFER_TO_OPTIONS,
 )
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -264,7 +266,7 @@ parser.add_argument(
     "--transferTo",
     type=str,
     default="skin+ribends",
-    choices=["all", "skin", "skin+spar", "skin+ribends"],
+    choices=TRANSFER_TO_OPTIONS,
     help="Which structural nodes to include in the LDTransfer",
 )
 
@@ -794,15 +796,7 @@ def createLoadTransferBuilder(ctx: RunContext, aeroBuilder, structBuilder) -> Me
         The load transfer builder
     """
     # --- First define which nodes in the aero and struct meshes will be involved in the transfer ---
-    if ctx.args.transferTo == "all":
-        ldTransferBodies = None
-    elif ctx.args.transferTo in [
-        "skin",
-        "skin+ribends",
-    ]:  # The rib-spar intersection nodes will be added later
-        ldTransferBodies = [{"aero": ["wall"], "struct": ["SKIN"]}]
-    elif ctx.args.transferTo == "skin+spar":
-        ldTransferBodies = [{"aero": ["wall"], "struct": ["SKIN", "SPAR"]}]
+    ldTransferBodies = getMeldBodyTags(ctx.args.transferTo, ctx.wingFamily, ctx.args.includeTail)
 
     isym = SPAN_INDEX  # spanwise-symmetry
     if ctx.args.transferType is None:
