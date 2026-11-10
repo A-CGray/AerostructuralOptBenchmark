@@ -1933,6 +1933,19 @@ def addConstraints(ctx: RunContext, flightPointProb: om.Problem, performanceProb
                 cache_linear_solution=True,
             )
 
+    # --- Pitching moment (trim) constraint ---
+    # With the tail, each aerostructural flight point's pitching moment about its CG must be zero, in every task, so
+    # this is not one of the design constraints. Load cases have no aero model and so no pitching moment. Dividing the
+    # lift constraint's scaling by the reference chord (the MAC) weighs a moment error of one MAC times a lift error
+    # the same as that lift error
+    if ctx.args.includeTail and isinstance(ctx.localFlightPoint, FlightPoint):
+        flightPointProb.model.add_constraint(
+            getPitchMomentName(ctx.localFlightPoint.name),
+            equals=0.0,
+            scaler=ctx.settings.liftConScale / ctx.localFlightPoint.chordRef,
+            cache_linear_solution=True,
+        )
+
     if ctx.settings.doAddDesignConstraints:
         # --- TACS Failure constraints ---
         # These should be included in all opt tasks
