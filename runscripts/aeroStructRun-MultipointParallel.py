@@ -203,7 +203,14 @@ parser.add_argument(
 parser.add_argument(
     "--includeTail",
     action="store_true",
-    help="Include a rigid horizontal tail in the aero model of every aerostructural flight point",
+    help=(
+        "Include a rigid horizontal tail in the aero model of every aerostructural flight point, each with its own "
+        "tail rotation design variable and zero pitching moment (trim) constraint. The pitching moment is taken about "
+        "the flight point's CG, which lies between the forward and aft CG limits at the flight point's CGFraction, in "
+        "the wing root chord plane, and includes only the wing and tail aerodynamic moments: fuselage, nacelle and "
+        "thrust moments are ignored. There is no static margin constraint, so with planform DVs but without "
+        "--addPlanformCons nothing keeps the wing's MAC bracketing the CG limits"
+    ),
     default=False,
 )
 parser.add_argument(
