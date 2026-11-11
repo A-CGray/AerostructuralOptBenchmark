@@ -62,6 +62,7 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
             "sepsensor",
             "sepsensorks",
             "sepsensorksarea",
+            "blank",
         ],
         "isosurface": {"vx": -0.001, "shock": 1.0},
         "writeTecplotSurfaceSolution": True,
