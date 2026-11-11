@@ -4,6 +4,7 @@
 import re
 import os
 import sys
+from collections.abc import Callable
 from typing import Iterable, Optional, Union
 
 # ==============================================================================
@@ -205,6 +206,73 @@ def getMeldBodyTags(transferTo: str, wingFamily: str, includeTail: bool) -> list
     if transferTo == "skin+spar":
         return [{"aero": [wingFamily], "struct": ["SKIN", "SPAR"]}]
     raise ValueError(f"transferTo must be one of {TRANSFER_TO_OPTIONS}, not {transferTo!r}")
+
+
+def solveBoundedSecant(
+    func: Callable[[float], float], x0: float, step: float, lower: float, upper: float, fTol: float, maxEvals: int
+) -> tuple[float, float, bool, int]:
+    """Find a root of a scalar function between two bounds with the secant method
+
+    The first two points are ``x0`` and ``x0 + step``, or ``x0 - step`` if ``x0 + step`` is above ``upper``, and each
+    secant update is clipped to ``[lower, upper]``. The search has converged as soon as ``|func(x)| <= fTol`` at an
+    evaluated point. It stops without converging when ``maxEvals`` evaluations have been made, when an update lands on
+    the bound the last point is already on, or when the last two function values are equal. ``func`` is only
+    evaluated inside ``[lower, upper]`` if ``x0`` is inside them and ``step`` is positive and at most half of
+    ``upper - lower``.
+
+    Parameters
+    ----------
+    func : Callable[[float], float]
+        Function whose root is sought, which may be expensive to evaluate (e.g. a CFD solve)
+    x0 : float
+        First point
+    step : float
+        Distance from the first point to the second
+    lower : float
+        Lower bound on the root
+    upper : float
+        Upper bound on the root
+    fTol : float
+        Largest absolute function value accepted at a root
+    maxEvals : int
+        Largest number of evaluations of ``func``, at least 1, including both starting points
+
+    Returns
+    -------
+    x : float
+        The last point evaluated, so any state ``func`` leaves behind belongs to it
+    fx : float
+        ``func(x)``
+    isConverged : bool
+        Whether ``|fx| <= fTol``
+    numEvals : int
+        Number of evaluations of ``func``
+    """
+    xPrev = x0
+    fPrev = func(xPrev)
+    numEvals = 1
+    if abs(fPrev) <= fTol or numEvals >= maxEvals:
+        return xPrev, fPrev, bool(abs(fPrev) <= fTol), numEvals
+
+    x = x0 + step
+    if x > upper:
+        x = x0 - step
+    fx = func(x)
+    numEvals += 1
+    while abs(fx) > fTol and numEvals < maxEvals:
+        # The secant through two equal values is flat and has no root
+        if fx == fPrev:
+            break
+        xNew = min(max(x - fx * (x - xPrev) / (fx - fPrev), lower), upper)
+        # Landing again on the bound the last point is on would only repeat that point
+        if xNew == x and (xNew == lower or xNew == upper):
+            break
+        xPrev = x
+        fPrev = fx
+        x = xNew
+        fx = func(x)
+        numEvals += 1
+    return x, fx, bool(abs(fx) <= fTol), numEvals
 
 
 def getTriangulatedSurface():
