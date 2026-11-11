@@ -27,7 +27,7 @@ from mpi4py import MPI
 # Extension modules
 # ==============================================================================
 from SETUP.setupADflow import getADflowOptions
-from utils import getAeroMeshPath, getOutputDir, getGeometryData, getFlightPointSet
+from utils import getAeroMeshPath, getOutputDir, getGeometryData, getFlightPointSet, setMomentReferenceToCG
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output", type=str, default="debug")
@@ -57,6 +57,8 @@ flightPoint = getFlightPointSet("cruise")[0]
 wingGeometry = getGeometryData()
 flightPoint.areaRef = wingGeometry["wing"]["planformArea"]
 flightPoint.chordRef = wingGeometry["wing"]["meanAerodynamicChord"]
+# Take moments about the cruise CG
+setMomentReferenceToCG(flightPoint)
 flightPoint.addDV("alpha", value=flightPoint.alpha, lower=0, upper=10.0, scale=0.1)
 
 if args.task == "analysis":
