@@ -122,8 +122,11 @@ levelFact = {
 fact = levelFact[args.level]
 
 # Extrude overset meshes to some multiple of the distance between the wing and tail, with the distance for each mesh being proportional to the root chord of the corresponding surface.
+# L3 extrudes further because its coarse background cells make ADflow's forced-receiver layers around the tail's
+# flood seeds reach past the tail mesh's outer boundary, leaving its outer fringes without donors (orphans). With
+# 1.0 the L3 mesh has ~2450 orphans, 1.4 still has ~200, and 1.6 and above have none.
 distFactor = {
-    "L3": 1.0,
+    "L3": 2.0,
     "L2": 1.0,
     "L1.4": 1.0,
     "L1": 1.0,

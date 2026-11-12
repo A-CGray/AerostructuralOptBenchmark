@@ -4,13 +4,16 @@
 import re
 import os
 import sys
-from typing import Optional, Union
+from typing import Iterable, Optional, Union
 
 # ==============================================================================
 # External Python modules
 # ==============================================================================
 import dill
 import openmdao.api as om
+
+# get_relevance is OpenMDAO-internal (not in openmdao.api or the docs), so this is the only place that imports it
+from openmdao.utils.relevance import get_relevance
 from mpi4py import MPI
 import reverse_argparse
 from pyoptsparse import History
@@ -27,6 +30,13 @@ from AircraftSpecs.STWFlightPoints import flightPointSets  # noqa: E402
 from AircraftSpecs.STWSpecs import aircraftSpecs  # noqa: E402
 from geometry.wingGeometry import wingGeometry  # noqa: E402
 from performanceCalc import FuelDistributionGroup  # noqa: E402
+
+# Re-exported for the runscripts, which import it from here
+from performanceCalc import getAeroForceName  # noqa: E402, F401
+
+
+# Line printed above and below the banners made by printBanner
+BANNER_LINE = "=" * 79
 
 
 def getGeometryData():
@@ -46,10 +56,6 @@ def getAeroMeshPath(level: int, useVLM: Optional[bool] = False) -> str:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing-VLMSurf-L{level}.npy")
     else:
         return os.path.join(THIS_FILE_DIR, f"../aero/wing_vol_L{level}.cgns")
-
-
-def getAeroForceName(fpName: str, forceName: str) -> str:
-    return f"{fpName}_{forceName.capitalize()}"
 
 
 def getStructMeshPath(level: int, order: int) -> str:
@@ -160,6 +166,26 @@ def setValsFromFiles(files: Union[list[str], str], prob: om.Problem) -> None:
         print("===============================================================================\n")
 
 
+def setLocalVals(prob: om.Problem, vals: dict) -> None:
+    """Set the values that exist in an OpenMDAO problem, skipping any names the problem doesn't have
+
+    In the multipoint script, the design variable dict holds the design variables of every flight point, but each
+    processor's model only has the ones for its own flight point.
+
+    Parameters
+    ----------
+    prob : om.Problem
+        The OpenMDAO problem to set values in
+    vals : dict
+        Values to set, keyed by variable name
+    """
+    for name, val in vals.items():
+        try:
+            prob.set_val(name, val)
+        except KeyError:
+            pass
+
+
 def writeOutputs(prob: om.Problem, outputDir: str, fileName: Optional[str] = None) -> None:
     """Write the outputs of an OpenMDAO model to a pickle
 
@@ -232,6 +258,111 @@ def getOutputDir():
 
 
 # ==============================================================================
+# Functions for running in parallel
+# ==============================================================================
+def computeProcsPerMember(numProcs: int, numMembers: int) -> list[int]:
+    """Split processors as evenly as possible between the members of a processor set
+
+    Parameters
+    ----------
+    numProcs : int
+        Total number of processors to split
+    numMembers : int
+        Number of members to split them between
+
+    Returns
+    -------
+    list[int]
+        Number of processors for each member, any processors left over from an even split go to the last members
+
+    Raises
+    ------
+    ValueError
+        If there are no members, or fewer processors than members
+    """
+    if numMembers < 1:
+        raise ValueError(f"Cannot split processors between {numMembers} members")
+    if numProcs < numMembers:
+        raise ValueError(f"Cannot split {numProcs} processors between {numMembers} members, need at least one each")
+    procsPerMember = [numProcs // numMembers] * numMembers
+    extraProcs = numProcs - sum(procsPerMember)
+    for ii in range(1, extraProcs + 1):
+        procsPerMember[-ii] += 1
+    return procsPerMember
+
+
+def gatherMergedDict(comm, localDict: dict, doBroadcast: bool = True) -> dict:
+    """Merge the dicts from every rank of a communicator into one dict
+
+    Parameters
+    ----------
+    comm : MPI communicator
+        Communicator to gather over
+    localDict : dict
+        This rank's dict
+    doBroadcast : bool, optional
+        Whether every rank should get the merged dict, otherwise only rank 0 gets it, by default True
+
+    Returns
+    -------
+    dict
+        The dicts merged in rank order, so a key on several ranks gets the value from the highest one.
+        Without ``doBroadcast``, ranks other than 0 get an empty dict.
+    """
+    if doBroadcast:
+        allDicts = comm.allgather(localDict)
+    else:
+        allDicts = comm.gather(localDict, root=0)
+    mergedDict = {}
+    if allDicts is not None:
+        for rankDict in allDicts:
+            mergedDict.update(rankDict)
+    return mergedDict
+
+
+def gatherUnion(comm, localItems: Iterable) -> list:
+    """Gather the items from every rank of a communicator into one sorted list without duplicates, on every rank
+
+    Parameters
+    ----------
+    comm : MPI communicator
+        Communicator to gather over
+    localItems : Iterable
+        This rank's items, which must be sortable
+
+    Returns
+    -------
+    list
+        Sorted union of the items from every rank
+    """
+    allItems = set()
+    for rankItems in comm.allgather(list(localItems)):
+        allItems.update(rankItems)
+    return sorted(allItems)
+
+
+# ==============================================================================
+# Functions for printing
+# ==============================================================================
+def printBanner(sections: dict[str, Iterable[str]]) -> None:
+    """Print titled lists of items between two lines of "=", with an empty line between sections
+
+    Parameters
+    ----------
+    sections : dict[str, Iterable[str]]
+        Items to print, keyed by section title
+    """
+    print("\n" + BANNER_LINE, flush=True)
+    for sectionNum, (title, items) in enumerate(sections.items()):
+        if sectionNum > 0:
+            print(flush=True)
+        print(f"{title}:", flush=True)
+        for item in items:
+            print(f"  - {item}", flush=True)
+    print(BANNER_LINE + "\n", flush=True)
+
+
+# ==============================================================================
 # Functions for translating OpenMDAO optimisation problem to a pyOptSparse problem
 # ==============================================================================
 def getPromName(system, abs_name):
@@ -276,6 +407,97 @@ def getSource(system, name):
         )
 
 
+AUTO_IVC_PREFIX = "_auto_ivc."
+
+
+def getPromotedInputNames(prob: om.Problem) -> list[str]:
+    """Get the promoted names of the inputs that a problem's model needs from outside, i.e. that no output connects to
+
+    Parameters
+    ----------
+    prob : om.Problem
+        Problem that has been set up
+
+    Returns
+    -------
+    list[str]
+        Sorted promoted names of the inputs whose source is OpenMDAO's automatic IVC, each listed once, the same on
+        every rank
+    """
+    inputNames = set()
+    # Without all_procs (or val), list_inputs only returns the inputs on the root rank
+    for _, meta in prob.model.list_inputs(val=False, prom_name=True, all_procs=True, out_stream=None):
+        promName = meta["prom_name"]
+        if getSource(prob.model, promName).startswith(AUTO_IVC_PREFIX):
+            inputNames.add(promName)
+    return sorted(inputNames)
+
+
+def checkInputsHaveSources(inputNames: Iterable[str], localOutputNames: Iterable[str], comm) -> None:
+    """Check that every input name is the name of an output on some rank of a communicator
+
+    This is collective, so every rank of `comm` must call it.
+
+    Parameters
+    ----------
+    inputNames : Iterable[str]
+        Names of the inputs that need a source
+    localOutputNames : Iterable[str]
+        Names of the outputs on this rank
+    comm : MPI communicator
+        Communicator over whose ranks the outputs are gathered
+
+    Raises
+    ------
+    ValueError
+        If any input name is not an output name on any rank, listing the missing names
+    """
+    inputNames = set(inputNames)
+    # Only send the local outputs that are inputs, as each rank may have thousands of outputs
+    foundNames = set(gatherUnion(comm, inputNames & set(localOutputNames)))
+    missingNames = sorted(inputNames - foundNames)
+    if len(missingNames) > 0:
+        raise ValueError(f"These inputs are not outputs of any flight point model: {missingNames}")
+
+
+def checkPerformanceOutputsDeclared(
+    model, performanceOutputNames: Iterable[str], localOutputNames: Iterable[str], aliasPrefix: str, comm
+) -> None:
+    """Check that each performance output a model has is declared as a constraint aliased with a given prefix
+
+    Performance outputs that are design variables of the model don't need declaring. Call this after final_setup. This is
+    collective, so every rank of `comm` must call it, and every rank raises if any rank finds an undeclared output.
+
+    Parameters
+    ----------
+    model : openmdao.core.group.Group
+        The model whose constraints are checked
+    performanceOutputNames : Iterable[str]
+        Promoted names of the outputs that should be declared, if the model has them
+    localOutputNames : Iterable[str]
+        Promoted names of the model's outputs
+    aliasPrefix : str
+        The prefix of the declared constraints' aliases
+    comm : MPI communicator
+        Communicator over whose ranks the undeclared names are gathered
+
+    Raises
+    ------
+    ValueError
+        If, on any rank, a performance output the model has is neither a design variable nor declared, listing the
+        undeclared names from all ranks
+    """
+    designVarNames = {dv["name"] for dv in model.get_design_vars().values()}
+    requiredNames = (set(performanceOutputNames) & set(localOutputNames)) - designVarNames
+    declaredNames = set()
+    for con in model.get_constraints().values():
+        if con["alias"] is not None and con["alias"].startswith(aliasPrefix):
+            declaredNames.add(con["name"])
+    undeclaredNames = gatherUnion(comm, requiredNames - declaredNames)
+    if len(undeclaredNames) > 0:
+        raise ValueError(f"These performance outputs are not declared as {aliasPrefix} constraints: {undeclaredNames}")
+
+
 def convertSensDict(openmdaoSensDict):
     """
     Convert the OpenMDAO sensitivity dictionary into the format expected by pyOptSparse
@@ -292,36 +514,47 @@ def convertSensDict(openmdaoSensDict):
     return sensDict
 
 
-def getRelevantInputs(omProb, outputName, dvOnly=False):
-    """Find the inputs that a given output depends on using OpenMDAO's relevance system
+def getRelevantInputs(model, outputName: str, candidateNames: list[str]) -> list[str]:
+    """Find which of a list of candidate variables a given output depends on, using OpenMDAO's relevance graph
+
+    A candidate is relevant to the output if there is a path through the model's data flow graph from the candidate to
+    the output, i.e. if changing the candidate can change the output. A candidate that is the output itself is
+    relevant.
+
+    The relevance object is built from explicit seeds (the output and the candidates), so neither needs to be declared
+    as a design variable or response. This uses `openmdao.utils.relevance.get_relevance`, which is internal to OpenMDAO
+    rather than public API.
 
     Parameters
     ----------
-    omProb : OpenMDAO Problem
-        The OpenMDAO problem to extract the relevant inputs from
+    model : openmdao.core.group.Group
+        Top level group of the OpenMDAO problem, after final_setup
     outputName : str
-        The name of the output to find the relevant inputs for, should be the absolute name
-    dvOnly : bool, optional
-        Whether to limit the search to inputs that have been declared as design variables, by default False
+        Absolute source name of the output
+    candidateNames : list[str]
+        Absolute source names of the variables the output might depend on, e.g. design variable sources
 
     Returns
     -------
-    list
-        Absolute names of all inputs that the output depends on
+    list[str]
+        Sorted absolute names of the candidates the output depends on, the same on every proc of the model's comm
     """
-    wrt = []
-    relevance = omProb.model._relevance
-    if dvOnly:
-        namesToCheck = [dvMetadata["source"] for dvMetadata in omProb.model.get_design_vars().values()]
-    else:
-        namesToCheck = [inputData[0] for inputData in omProb.model.list_inputs(out_stream=None)]
-    with relevance.seeds_active(rev_seeds=(outputName,)):
-        for name in namesToCheck:
-            if relevance.is_relevant(name):
-                wrt.append(name)
-    wrt = list(set(wrt))
-    wrt = omProb.model.comm.bcast(wrt, root=0)
-    return wrt
+    # With no candidates, get_relevance returns a permanently inactive relevance object that reports every variable as
+    # relevant. Only the candidates are checked below so the result would still be empty, but return early so that never
+    # depends on the inactive object
+    if len(candidateNames) == 0:
+        return []
+    of = {outputName: {"source": outputName, "parallel_deriv_color": None}}
+    wrt = {name: {"source": name, "parallel_deriv_color": None} for name in candidateNames}
+    relevance = get_relevance(model, of, wrt)
+    with relevance.seeds_active(fwd_seeds=tuple(candidateNames), rev_seeds=(outputName,)):
+        relevantNames = [name for name in candidateNames if relevance.is_relevant(name)]
+    return model.comm.bcast(sorted(set(relevantNames)), root=0)
+
+
+def getDesignVarSources(model) -> list[str]:
+    """Get the absolute source names of all design variables declared in an OpenMDAO model"""
+    return [meta["source"] for meta in model.get_design_vars().values()]
 
 
 def addDesignVarsFromOpenMDAO(optProb, omProb):
@@ -375,7 +608,7 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
     name = getPromName(omProb.model, con["source"])
 
     if isinstance(wrt, str) and wrt.lower() == "auto":
-        wrt = getRelevantInputs(omProb, con["source"], dvOnly=True)
+        wrt = getRelevantInputs(omProb.model, con["source"], getDesignVarSources(omProb.model))
         wrt = [getPromName(omProb.model, var) for var in wrt]
 
     # Get the scaling factor if there is one
@@ -442,7 +675,32 @@ def addConstraintFromOpenMDAO(con, optProb, omProb, wrt=None):
         jac = None
 
     # Add the constraint
+    lb = convertInfiniteBoundsToNone(lb)
+    ub = convertInfiniteBoundsToNone(ub)
     optProb.addConGroup(name, size, lower=lb, upper=ub, scale=scale, wrt=wrt, jac=jac, linear=linear)
+
+
+def convertInfiniteBoundsToNone(bound):
+    """Convert the infinite entries of an OpenMDAO constraint bound to None, which pyOptSparse treats as unbounded
+
+    Infinite entries let a constraint bound only some entries of an array output, OpenMDAO keeps them as infinite but
+    pyOptSparse would pass them straight to the optimiser.
+
+    Parameters
+    ----------
+    bound : float, numpy.ndarray or None
+        The bound as OpenMDAO stores it
+
+    Returns
+    -------
+    float, list or None
+        The bound with every infinite entry replaced by None, an array bound becomes a list
+    """
+    if bound is None:
+        return None
+    if np.ndim(bound) == 0:
+        return None if np.isinf(bound) else bound
+    return [None if np.isinf(value) else value for value in bound]
 
 
 def getTipDisplacement(prob, fpName):

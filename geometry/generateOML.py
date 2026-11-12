@@ -29,6 +29,7 @@ from writeOASMesh import writeOASMesh
 
 spanIndex = wingGeometry["spanIndex"]
 chordIndex = wingGeometry["chordIndex"]
+verticalIndex = wingGeometry["verticalIndex"]
 
 
 def generateOML(partName: str):
@@ -132,7 +133,6 @@ for ii in range(len(numSpanPanels)):
         numChordPanels=numChordPanels[ii],
         meshName=f"hTail-VLMSurf-L{3 - ii}",
     )
-exit(0)
 # ==============================================================================
 # Generate FFDs
 # ==============================================================================
@@ -224,3 +224,36 @@ elif args.ffdType == "advanced":
             relMargins=[0.015, 0.0035, 0.01],
             liftIndex=wingGeometry["verticalIndex"] + 1,
         )
+
+# ==============================================================================
+# Create basic tail FFD
+# ==============================================================================
+tailFFDName = "hTail-ffd.xyz"
+tailFFDLEList = wingGeometry["hTail"]["LECoords"]
+tailFFDLEList[:, chordIndex] += 1e-4 * wingGeometry["hTail"]["sectionChord"]
+tailFFDLEList[0, spanIndex] += 1e-4
+tailFFDLEList[-1, spanIndex] -= 1e-4
+
+tailFFDTEList = wingGeometry["hTail"]["TECoords"]
+tailFFDTEList[:, chordIndex] -= 1e-4 * wingGeometry["hTail"]["sectionChord"]
+tailFFDTEList[0, spanIndex] += 1e-4
+tailFFDTEList[-1, spanIndex] -= 1e-4
+
+absMargins = np.zeros((3,))
+relMargins = np.zeros((3,))
+absMargins[verticalIndex] = 0.2
+absMargins[spanIndex] = 1e-2
+relMargins[chordIndex] = 0.01
+
+createFittedWingFFD(
+    tailSurface,
+    surfFormat="point-vector",
+    outFile=tailFFDName,
+    leList=tailFFDLEList,
+    teList=tailFFDTEList,
+    nSpan=2,
+    nChord=2,
+    absMargins=absMargins,
+    relMargins=relMargins,
+    liftIndex=wingGeometry["verticalIndex"] + 1,
+)

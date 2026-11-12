@@ -204,4 +204,7 @@ flightPointSets = {
         taxiBumpPositive,
         taxiBumpNegative,
     ],
+    # Smallest set reaching every flight-point-dependent branch of the multipoint runscript (ADflow, VLM,
+    # structural-only, buffet, cruise, all four mass configurations), used for refactor regression checks
+    "refactorTest": [standardCruise, buffetHighLift, seaLevelLowSpeedPullUp, taxiBumpPositive],
 }
