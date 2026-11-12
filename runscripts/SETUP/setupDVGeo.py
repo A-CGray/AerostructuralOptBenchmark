@@ -36,8 +36,8 @@ WING_FFD_VOLUME = 0
 TAIL_FFD_VOLUME = 1
 # Name of the horizontal tail's reference axis, its hinge line, matching the tail's wall family in the CFD mesh
 TAIL_AXIS_NAME = "hTail"
-# Bounds on the tail rotation in degrees, positive leading edge up: a conservative widening of the MD-80's limits of
-# 12.2 degrees leading edge down and 2.1 degrees leading edge up
+# Bounds on the tail rotation in degrees, positive nose up: a conservative widening of the MD-80's limits of 12.2
+# degrees nose down and 2.1 degrees nose up
 TAIL_ROTATION_LOWER = -15.0
 TAIL_ROTATION_UPPER = 5.0
 # The tail rotation has a fixed scaling, like the angle of attack, rather than one multiplied by --geoScalingFactor
@@ -92,7 +92,7 @@ def rotateTail(val, geo) -> None:
     Parameters
     ----------
     val : array
-        The tail rotation in degrees, positive leading edge up
+        The tail rotation in degrees, positive nose up (increasing the tail's incidence)
     geo : DVGeometry
         The DVGeometry object whose tail reference axis is rotated
     """
