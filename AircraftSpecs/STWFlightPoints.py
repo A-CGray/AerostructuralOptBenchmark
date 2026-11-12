@@ -34,8 +34,10 @@ FORWARD_CG_FRACTION = 0.0
 # These are estimates of the trimmed rotations on the baseline geometry, to start runs with the tail close to trim
 # From the trimmed rigid ADflow polar, interpolated to the cruise angle of attack
 CRUISE_TAIL_ROTATION = -3.1
-# From the trimmed VLM analysis of the sea level pull-up, also used for the high speed pull-up
-PULL_UP_TAIL_ROTATION = -10.0
+# From the trimmed VLM analysis of the sea level pull-up
+SEA_LEVEL_PULL_UP_TAIL_ROTATION = -10.0
+# A guess: the sea level pull-up's rotation scaled down by the ratio of dynamic pressures (1.34)
+HIGH_ALT_PULL_UP_TAIL_ROTATION = -7.5
 # A guess: no push-down has been trimmed with the tail
 PUSH_DOWN_TAIL_ROTATION = 1.5
 # Linear estimate from the untrimmed pitching moment of the high lift buffet point and its derivatives
@@ -120,7 +122,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
     altitude=MANEUVER_ALTITUDE,
     alpha=8.7,
     CGFraction=FORWARD_CG_FRACTION,
-    tailRotation=PULL_UP_TAIL_ROTATION,
+    tailRotation=SEA_LEVEL_PULL_UP_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
     canUseVLM=True,
 )
@@ -159,7 +161,7 @@ highAltHighSpeedPullUp = FlightPoint(
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=5.0,
     CGFraction=FORWARD_CG_FRACTION,
-    tailRotation=PULL_UP_TAIL_ROTATION,
+    tailRotation=HIGH_ALT_PULL_UP_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
