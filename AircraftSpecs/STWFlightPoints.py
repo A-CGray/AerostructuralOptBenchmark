@@ -40,8 +40,8 @@ PULL_UP_TAIL_ROTATION = -10.0
 PUSH_DOWN_TAIL_ROTATION = 1.5
 # Linear estimate from the untrimmed pitching moment of the high lift buffet point and its derivatives
 BUFFET_HIGH_LIFT_TAIL_ROTATION = -7.5
-# A guess: slightly more than cruise, because of the forward CG
-BUFFET_HIGH_SPEED_TAIL_ROTATION = -4.0
+# A guess: the cruise rotation scaled down by the ratio of dynamic pressures (1.16), plus a little for the forward CG
+BUFFET_HIGH_SPEED_TAIL_ROTATION = -3.0
 
 # ==============================================================================
 # Cruise conditions
