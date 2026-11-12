@@ -7,7 +7,10 @@ import unittest
 # ==============================================================================
 # External Python modules
 # ==============================================================================
+import numpy as np
 import openmdao.api as om
+from hypothesis import given, settings
+from hypothesis.strategies import floats
 
 # ==============================================================================
 # Extension modules
@@ -15,9 +18,11 @@ import openmdao.api as om
 import utils
 from AircraftSpecs.FlightPoint import FlightPoint
 from performanceCalc import (
+    CorrectedDragComp,
     FuelAndMassConstraintGroup,
     FuelConsistencyGroup,
     LiftConstraintGroup,
+    computeCorrectedDrag,
     computeFuelTankUsage,
     getAeroForceName,
 )
@@ -30,6 +35,12 @@ TEST_SPECS = {
     "auxFuelVolume": 1.0,
 }
 TEST_POINT_NAME = "testPoint"
+# Upper bounds of the corrected drag test inputs, a few times larger than any value the benchmark uses
+MAX_TEST_DRAG = 1e6  # N
+MAX_TEST_DRAG_COEFF = 0.1
+MAX_TEST_REF_AREA = 500.0  # m^2
+MAX_TEST_DYN_PRESSURE = 1e5  # Pa
+CORRECTED_DRAG_RTOL = 1e-12
 
 
 def createTestFlightPoint() -> FlightPoint:
@@ -158,6 +169,57 @@ class TestFuelAndMassConstraintGroup(unittest.TestCase):
             auxTankVolume=TEST_SPECS["auxFuelVolume"],
         )
         self.assertAlmostEqual(prob.get_val("fuelTankUsage")[0], expectedUsage)
+
+
+class TestCorrectedDrag(unittest.TestCase):
+    @given(
+        drag=floats(0.0, MAX_TEST_DRAG),
+        extraDragCoeff=floats(0.0, MAX_TEST_DRAG_COEFF),
+        refArea=floats(0.0, MAX_TEST_REF_AREA),
+        dynPressure=floats(0.0, MAX_TEST_DYN_PRESSURE),
+    )
+    def test_drag_area_form_matches_coefficient_form(self, drag, extraDragCoeff, refArea, dynPressure):
+        """
+        Given an extra drag coefficient and the reference area it is normalised by,
+        when computeCorrectedDrag is given their product as the extra drag area,
+        then it returns the same corrected drag as the old coefficient form, drag + coefficient * area * dynamic
+        pressure.
+        """
+        expectedDrag = drag + extraDragCoeff * refArea * dynPressure
+        correctedDrag = computeCorrectedDrag(drag=drag, extraCDA=extraDragCoeff * refArea, dynPressure=dynPressure)
+        np.testing.assert_allclose(correctedDrag, expectedDrag, rtol=CORRECTED_DRAG_RTOL)
+
+    # Each example sets up a whole OpenMDAO problem, which can overrun Hypothesis's deadline on a busy machine
+    @settings(deadline=None)
+    @given(
+        drag=floats(0.0, MAX_TEST_DRAG),
+        extraDragCoeff=floats(0.0, MAX_TEST_DRAG_COEFF),
+        refArea=floats(0.0, MAX_TEST_REF_AREA),
+        dynPressure=floats(0.0, MAX_TEST_DYN_PRESSURE),
+    )
+    def test_component_matches_coefficient_form(self, drag, extraDragCoeff, refArea, dynPressure):
+        """
+        Given a CorrectedDragComp built with a drag area equal to an extra drag coefficient times its reference area,
+        when the component is run with a drag input,
+        then its correctedDrag output equals the old coefficient form, drag + coefficient * area * dynamic pressure.
+        """
+        prob = om.Problem()
+        prob.model.add_subsystem(
+            "dragCorrection",
+            CorrectedDragComp(extraCDA=extraDragCoeff * refArea, dynPressure=dynPressure),
+            promotes=["*"],
+        )
+        prob.setup()
+        prob.set_val("drag", drag, units="N")
+        prob.run_model()
+        expectedDrag = drag + extraDragCoeff * refArea * dynPressure
+        np.testing.assert_allclose(prob.get_val("correctedDrag")[0], expectedDrag, rtol=CORRECTED_DRAG_RTOL)
+
+    def test_old_coefficient_options_are_rejected(self):
+        """Assert that CorrectedDragComp rejects the extraDragCoeff and wingArea options as undeclared."""
+        for oldOption in ["extraDragCoeff", "wingArea"]:
+            with self.assertRaisesRegex(KeyError, oldOption):
+                CorrectedDragComp(extraCDA=1.0, dynPressure=1.0, **{oldOption: 1.0})
 
 
 if __name__ == "__main__":

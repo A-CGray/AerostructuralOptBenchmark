@@ -2,12 +2,14 @@
 # Standard Python modules
 # ==============================================================================
 import contextlib
+import functools
 import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 # ==============================================================================
@@ -15,15 +17,20 @@ import unittest
 # ==============================================================================
 import numpy as np
 import openmdao.api as om
-from hypothesis import assume, given
-from hypothesis.strategies import data, floats, integers, lists, sampled_from, text
+import pytest
+from hypothesis import assume, given, settings
+from hypothesis.extra.numpy import arrays
+from hypothesis.strategies import composite, data, floats, integers, lists, one_of, sampled_from, text
 from pyoptsparse import Optimization
+from pygeo.pyBlock import pyBlock
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
 from utils import (
     BANNER_LINE,
+    NUM_SPATIAL_DIMS,
+    TRANSFER_TO_OPTIONS,
     addConstraintFromOpenMDAO,
     checkInputsHaveSources,
     checkPerformanceOutputsDeclared,
@@ -32,11 +39,14 @@ from utils import (
     gatherMergedDict,
     gatherUnion,
     getDesignVarSources,
+    getMeldBodyTags,
     getPromotedInputNames,
     getRelevantInputs,
     getSource,
     printBanner,
     setLocalVals,
+    solveBoundedSecant,
+    writeMultiBlockFFD,
 )
 
 MAX_TEST_MEMBERS = 50
@@ -46,6 +56,65 @@ MISSING_NAME_ALPHABET = NAME_ALPHABET + "d"
 RUNSCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runscripts")
 NUM_MPI_TEST_PROCS = 3
 MPI_TEST_TIMEOUT = 120  # seconds
+# Sizes of the FFD blocks and files drawn for the writeMultiBlockFFD tests. pyBlock needs at least 2 nodes in each
+# direction
+MIN_TEST_BLOCK_NODES = 2
+MAX_TEST_BLOCK_NODES = 4
+MAX_TEST_BLOCKS_PER_FILE = 3
+MAX_TEST_BLOCK_FILES = 3
+MAX_TEST_BLOCK_ORIGIN = 100.0
+MIN_TEST_NODE_SPACING = 0.1
+MAX_TEST_NODE_SPACING = 10.0
+# Largest shift of a node from its place in a regular lattice, as a fraction of the node spacing
+MAX_TEST_NODE_SHIFT = 0.25
+# Wing family name and rib-spar intersection node IDs used by the getMeldBodyTags tests
+TEST_WING_FAMILY = "wing"
+TEST_RIB_SPAR_NODE_IDS = [1, 2]
+# The structural tags of the single MELD body for each --transferTo option: -1 is every structural node except the
+# RBE multiplier nodes. It is written out rather than imported as ALL_STRUCT_NODES_TAG so the test pins the value TACS
+# expects. The skin+ribends rib-spar intersection nodes are only added once the structural model exists
+EXPECTED_MELD_STRUCT_TAGS = {
+    "all": -1,
+    "skin": ["SKIN"],
+    "skin+ribends": ["SKIN"],
+    "skin+spar": ["SKIN", "SPAR"],
+}
+# Bounds, starting points and functions drawn for the solveBoundedSecant tests, of the order of the polar's tail
+# rotations in degrees and its cmy values
+MAX_TEST_BOUND_MAGNITUDE = 20.0
+MIN_TEST_BOUND_WIDTH = 1.0
+MAX_TEST_BOUND_WIDTH = 30.0
+# The step as a fraction of the distance between the bounds. solveBoundedSecant only promises to evaluate between the
+# bounds when the step is at most half that distance, and the largest fraction drawn leaves a margin for rounding
+MIN_TEST_STEP_FRACTION = 0.01
+MAX_TEST_STEP_FRACTION = 0.4
+MIN_TEST_SLOPE = 1e-2
+MAX_TEST_SLOPE = 10.0
+# Largest cubic term of the monotonic test functions, as a multiple of the linear term one bound width from the root:
+# with 1, the slope changes by at most a factor of 4 between the bounds when the root is between them
+MAX_TEST_CUBIC_FACTOR = 1.0
+# Smallest and largest distance from the nearer bound to a root outside the bounds, as a fraction of the bound width
+MIN_TEST_ROOT_GAP = 1e-3
+MAX_TEST_ROOT_GAP = 1.0
+MAX_TEST_SINE_AMPLITUDE = 1.0
+MAX_TEST_SINE_FREQUENCY = 5.0
+MAX_TEST_EVALS = 20
+# The tolerance, evaluation limit, step and bounds adflowPolar.py trims cmy with, used by the example tests
+TEST_F_TOL = 1e-6
+TEST_MAX_EVALS = 10
+EXAMPLE_STEP = 0.5
+EXAMPLE_LOWER = -15.0
+EXAMPLE_UPPER = 5.0
+# A starting point less than a step below the upper bound
+EXAMPLE_X0_NEAR_UPPER = 4.75
+# A line through zero with its root above the upper bound
+EXAMPLE_ROOT_ABOVE_UPPER = 8.0
+EXAMPLE_SLOPE = 1.0
+# An exponential whose root is just below the upper bound of [0, 3], where the first secant update from 0 and 0.5
+# overshoots the upper bound
+EXAMPLE_EXP_LOWER = 0.0
+EXAMPLE_EXP_UPPER = 3.0
+EXAMPLE_EXP_ROOT = 2.9
 
 # Run by test_same_names_on_every_rank_under_mpi: prints each rank's promoted input names, for a model whose parallel
 # group puts some inputs on only some ranks
@@ -567,6 +636,355 @@ class TestAddConstraintFromOpenMDAO(unittest.TestCase):
         con = optProb.constraints["x"]
         self.assertEqual(list(con.upper), [1.0, None, None])
         self.assertEqual(list(con.lower), [None, None, None])
+
+
+@composite
+def ffdBlocks(draw):
+    """Draw the (nx, ny, nz, 3) node coordinates of an FFD block: a regular lattice with each node shifted a little
+
+    pyBlock can't build its topology for blocks with coincident nodes, so the coordinates are not fully arbitrary.
+    """
+    blockSize = [draw(integers(MIN_TEST_BLOCK_NODES, MAX_TEST_BLOCK_NODES)) for _ in range(NUM_SPATIAL_DIMS)]
+    origin = draw(arrays(float, NUM_SPATIAL_DIMS, elements=floats(-MAX_TEST_BLOCK_ORIGIN, MAX_TEST_BLOCK_ORIGIN)))
+    spacing = draw(arrays(float, NUM_SPATIAL_DIMS, elements=floats(MIN_TEST_NODE_SPACING, MAX_TEST_NODE_SPACING)))
+    nodeShifts = draw(
+        arrays(float, (*blockSize, NUM_SPATIAL_DIMS), elements=floats(-MAX_TEST_NODE_SHIFT, MAX_TEST_NODE_SHIFT))
+    )
+    nodeIndices = np.stack(np.meshgrid(*(np.arange(numNodes) for numNodes in blockSize), indexing="ij"), axis=-1)
+    return origin + (nodeIndices + nodeShifts) * spacing
+
+
+def writePlot3DFile(blocks: list, fileName: str) -> None:
+    """Write blocks of (nx, ny, nz, 3) node coordinates to an ASCII plot3d file, keeping every digit"""
+    with open(fileName, "w") as f:
+        f.write(f"{len(blocks)}\n")
+        for block in blocks:
+            f.write(" ".join(str(numNodes) for numNodes in block.shape[:NUM_SPATIAL_DIMS]) + "\n")
+        for block in blocks:
+            for dim in range(NUM_SPATIAL_DIMS):
+                f.write(" ".join(repr(float(coord)) for coord in block[..., dim].flatten(order="F")) + "\n")
+
+
+class TestWriteMultiBlockFFD(unittest.TestCase):
+    # Building a pyBlock takes longer than Hypothesis's default deadline when the machine is busy
+    @settings(deadline=None)
+    @given(
+        fileBlocks=lists(
+            lists(ffdBlocks(), min_size=1, max_size=MAX_TEST_BLOCKS_PER_FILE), min_size=1, max_size=MAX_TEST_BLOCK_FILES
+        )
+    )
+    def test_round_trip_through_pyblock_keeps_blocks_in_order(self, fileBlocks):
+        """
+        Given several plot3d files, each holding one or more FFD blocks,
+        when writeMultiBlockFFD combines them and pyBlock reads the combined file,
+        then pyBlock holds exactly the input blocks, in the order of the files and of the blocks within each file.
+        """
+        with tempfile.TemporaryDirectory() as tmpDir:
+            blockFiles = []
+            for ii, blocks in enumerate(fileBlocks):
+                blockFiles.append(os.path.join(tmpDir, f"blocks{ii}.xyz"))
+                writePlot3DFile(blocks, blockFiles[-1])
+            combinedFile = os.path.join(tmpDir, "combined.xyz")
+            writeMultiBlockFFD(blockFiles, combinedFile)
+            combinedFFD = pyBlock("plot3d", fileName=combinedFile, FFD=True)
+
+        expectedBlocks = [block for blocks in fileBlocks for block in blocks]
+        self.assertEqual(combinedFFD.nVol, len(expectedBlocks))
+        for vol, expectedBlock in zip(combinedFFD.vols, expectedBlocks, strict=True):
+            np.testing.assert_array_equal(vol.coef, expectedBlock)
+
+    def test_file_with_missing_values_raises(self):
+        """Assert that writeMultiBlockFFD raises a ValueError naming a file that holds fewer values than its header
+        describes.
+        """
+        block = np.zeros((2, 2, 2, NUM_SPATIAL_DIMS))
+        with tempfile.TemporaryDirectory() as tmpDir:
+            truncatedFile = os.path.join(tmpDir, "truncated.xyz")
+            writePlot3DFile([block], truncatedFile)
+            with open(truncatedFile) as f:
+                values = f.read().split()
+            with open(truncatedFile, "w") as f:
+                f.write(" ".join(values[:-1]) + "\n")
+            with self.assertRaisesRegex(ValueError, "truncated.xyz"):
+                writeMultiBlockFFD([truncatedFile], os.path.join(tmpDir, "combined.xyz"))
+
+    def test_file_with_incomplete_header_raises(self):
+        """Assert that writeMultiBlockFFD raises a ValueError naming a file that is empty or ends before giving the
+        sizes of every block its header counts.
+        """
+        incompleteHeaders = ["", "1\n", "2\n2 2 2\n"]
+        with tempfile.TemporaryDirectory() as tmpDir:
+            for header in incompleteHeaders:
+                with self.subTest(header=header):
+                    headerFile = os.path.join(tmpDir, "incompleteHeader.xyz")
+                    with open(headerFile, "w") as f:
+                        f.write(header)
+                    with self.assertRaisesRegex(ValueError, "incompleteHeader.xyz"):
+                        writeMultiBlockFFD([headerFile], os.path.join(tmpDir, "combined.xyz"))
+
+
+class TestGetMeldBodyTags:
+    @pytest.mark.parametrize("includeTail", [False, True])
+    @pytest.mark.parametrize("transferTo", TRANSFER_TO_OPTIONS)
+    @given(wingFamily=text(min_size=1))
+    def test_only_the_wing_is_tagged(self, transferTo, includeTail, wingFamily):
+        """
+        Given any --transferTo option, with or without the tail, and any wing family name,
+        when getMeldBodyTags builds the MELD body tags,
+        then `all` without the tail gives None, so MELD couples every node as before, and every other case gives one
+        body whose only aero tag is the wing family and whose struct tags are the option's components, or -1 (every
+        structural node) for `all` with the tail.
+        """
+        bodyTags = getMeldBodyTags(transferTo, wingFamily, includeTail)
+        if transferTo == "all" and not includeTail:
+            assert bodyTags is None
+        else:
+            assert bodyTags == [{"aero": [wingFamily], "struct": EXPECTED_MELD_STRUCT_TAGS[transferTo]}]
+
+    def test_struct_tags_can_be_extended_in_place(self):
+        """
+        Given the body tags getMeldBodyTags returns for skin+ribends,
+        when node IDs are appended to their struct tags in place, as the runscript does with the rib-spar nodes,
+        then a later call still returns the skin-only tags, because every call builds new lists.
+        """
+        bodyTags = getMeldBodyTags("skin+ribends", TEST_WING_FAMILY, False)
+        bodyTags[0]["struct"] += TEST_RIB_SPAR_NODE_IDS
+        assert getMeldBodyTags("skin+ribends", TEST_WING_FAMILY, False) == [
+            {"aero": [TEST_WING_FAMILY], "struct": ["SKIN"]}
+        ]
+
+    def test_unknown_option_raises(self):
+        """Assert that getMeldBodyTags raises a ValueError naming a --transferTo option it doesn't know."""
+        with pytest.raises(ValueError, match="'ribs'"):
+            getMeldBodyTags("ribs", TEST_WING_FAMILY, True)
+
+
+def evaluateMonotonicCubic(x: float, root: float, slope: float, cubicCoeff: float) -> float:
+    """Evaluate a cubic whose only real root is at root, which is monotonic when slope and cubicCoeff have the same
+    sign
+    """
+    return slope * (x - root) + cubicCoeff * (x - root) ** 3
+
+
+def evaluateSine(x: float, amplitude: float, frequency: float, phase: float, offset: float) -> float:
+    """Evaluate a sine wave, which has many roots or none"""
+    return offset + amplitude * np.sin(frequency * x + phase)
+
+
+def evaluateExponential(x: float, root: float) -> float:
+    """Evaluate an exponential whose only root is at root, which is steep above it and flat below it"""
+    return np.exp(x) - np.exp(root)
+
+
+def evaluateConstant(x: float, value: float) -> float:
+    """Evaluate a flat function"""
+    return value
+
+
+def recordCalls(func) -> tuple:
+    """Wrap a function so that each point it is evaluated at, and the value there, is recorded in order"""
+    calls = []
+
+    def recordedFunc(x: float) -> float:
+        fx = func(x)
+        calls.append((x, fx))
+        return fx
+
+    return recordedFunc, calls
+
+
+@composite
+def secantStarts(draw) -> tuple[float, float, float, float]:
+    """Draw the lower and upper bounds, a starting point between them or on one of them, and a step"""
+    lower = draw(floats(-MAX_TEST_BOUND_MAGNITUDE, 0.0))
+    upper = lower + draw(floats(MIN_TEST_BOUND_WIDTH, MAX_TEST_BOUND_WIDTH))
+    x0 = draw(floats(lower, upper))
+    width = upper - lower
+    step = draw(floats(MIN_TEST_STEP_FRACTION * width, MAX_TEST_STEP_FRACTION * width))
+    return lower, upper, x0, step
+
+
+@composite
+def monotonicCubics(draw, lower: float, upper: float, root: float):
+    """Draw a monotonic cubic with its root at root, whose slope changes by at most a factor of 4 between the bounds
+    when the root is between them
+    """
+    slope = draw(sampled_from([-1.0, 1.0])) * draw(floats(MIN_TEST_SLOPE, MAX_TEST_SLOPE))
+    cubicCoeff = np.sign(slope) * draw(floats(0.0, MAX_TEST_CUBIC_FACTOR)) * abs(slope) / (upper - lower) ** 2
+    return functools.partial(evaluateMonotonicCubic, root=root, slope=slope, cubicCoeff=cubicCoeff)
+
+
+@composite
+def rootInsideProblems(draw) -> tuple:
+    """Draw bounds, a starting point, a step and a monotonic cubic with its root between the bounds or on one"""
+    lower, upper, x0, step = draw(secantStarts())
+    root = draw(floats(lower, upper))
+    return lower, upper, x0, step, draw(monotonicCubics(lower, upper, root))
+
+
+@composite
+def rootOutsideProblems(draw) -> tuple:
+    """Draw bounds, a starting point, a step and a monotonic cubic with its root below the lower bound or above the
+    upper one, far enough away that the cubic is larger than TEST_F_TOL everywhere between the bounds
+    """
+    lower, upper, x0, step = draw(secantStarts())
+    gap = draw(floats(MIN_TEST_ROOT_GAP, MAX_TEST_ROOT_GAP)) * (upper - lower)
+    root = draw(sampled_from([lower - gap, upper + gap]))
+    return lower, upper, x0, step, draw(monotonicCubics(lower, upper, root))
+
+
+@composite
+def flatProblems(draw) -> tuple:
+    """Draw bounds, a starting point, a step and a constant function too far from zero to have a root"""
+    lower, upper, x0, step = draw(secantStarts())
+    value = draw(sampled_from([-1.0, 1.0])) * draw(floats(2 * TEST_F_TOL, MAX_TEST_SLOPE))
+    return lower, upper, x0, step, functools.partial(evaluateConstant, value=value)
+
+
+@composite
+def anyProblems(draw) -> tuple:
+    """Draw bounds, a starting point, a step, an evaluation limit and a monotonic cubic with its root anywhere near
+    the bounds, a sine wave or a constant
+    """
+    lower, upper, x0, step = draw(secantStarts())
+    width = upper - lower
+    root = draw(floats(lower - width, upper + width))
+    sine = functools.partial(
+        evaluateSine,
+        amplitude=draw(floats(0.0, MAX_TEST_SINE_AMPLITUDE)),
+        frequency=draw(floats(0.0, MAX_TEST_SINE_FREQUENCY)),
+        phase=draw(floats(0.0, 2 * np.pi)),
+        offset=draw(floats(-MAX_TEST_SINE_AMPLITUDE, MAX_TEST_SINE_AMPLITUDE)),
+    )
+    constant = functools.partial(evaluateConstant, value=draw(floats(-MAX_TEST_SLOPE, MAX_TEST_SLOPE)))
+    func = draw(one_of(monotonicCubics(lower, upper, root), sampled_from([sine, constant])))
+    return lower, upper, x0, step, func, draw(integers(1, MAX_TEST_EVALS))
+
+
+class TestSolveBoundedSecant(unittest.TestCase):
+    @given(rootInsideProblems())
+    def test_root_inside_bounds_is_found(self, problem):
+        """
+        Given a monotonic cubic with its root between the bounds or on one of them, and a starting point between them
+        or on one of them,
+        when solveBoundedSecant searches with the polar's tolerance and evaluation limit,
+        then it converges at a point between the bounds or on one of them where the cubic is within the tolerance of
+        zero.
+        """
+        lower, upper, x0, step, func = problem
+        x, fx, isConverged, _ = solveBoundedSecant(func, x0, step, lower, upper, TEST_F_TOL, TEST_MAX_EVALS)
+        self.assertTrue(isConverged)
+        self.assertLessEqual(abs(fx), TEST_F_TOL)
+        self.assertTrue(lower <= x <= upper)
+
+    @given(anyProblems())
+    def test_iterates_stay_between_bounds(self, problem):
+        """
+        Given a monotonic cubic with its root inside or outside the bounds, a sine wave or a constant, and a starting
+        point between the bounds or on one of them,
+        when solveBoundedSecant searches for a root,
+        then every point it evaluates the function at is between the bounds or on one of them.
+        """
+        lower, upper, x0, step, func, maxEvals = problem
+        recordedFunc, calls = recordCalls(func)
+        solveBoundedSecant(recordedFunc, x0, step, lower, upper, TEST_F_TOL, maxEvals)
+        for x, _ in calls:
+            self.assertTrue(lower <= x <= upper, f"{x} is outside [{lower}, {upper}]")
+
+    @given(rootOutsideProblems())
+    def test_root_outside_bounds_is_not_converged(self, problem):
+        """Assert that solveBoundedSecant reports no convergence for a monotonic cubic whose root is outside the
+        bounds.
+        """
+        lower, upper, x0, step, func = problem
+        _, _, isConverged, _ = solveBoundedSecant(func, x0, step, lower, upper, TEST_F_TOL, TEST_MAX_EVALS)
+        self.assertFalse(isConverged)
+
+    @given(flatProblems())
+    def test_flat_function_is_not_converged(self, problem):
+        """Assert that solveBoundedSecant reports no convergence for a nonzero constant, and stops after the two
+        starting points because their values are equal.
+        """
+        lower, upper, x0, step, func = problem
+        _, _, isConverged, numEvals = solveBoundedSecant(func, x0, step, lower, upper, TEST_F_TOL, TEST_MAX_EVALS)
+        self.assertFalse(isConverged)
+        self.assertEqual(numEvals, 2)
+
+    @given(anyProblems())
+    def test_max_evals_never_exceeded(self, problem):
+        """
+        Given any of the test functions and an evaluation limit,
+        when solveBoundedSecant searches for a root,
+        then it evaluates the function at most the limit's number of times and reports how many times it did.
+        """
+        lower, upper, x0, step, func, maxEvals = problem
+        recordedFunc, calls = recordCalls(func)
+        _, _, _, numEvals = solveBoundedSecant(recordedFunc, x0, step, lower, upper, TEST_F_TOL, maxEvals)
+        self.assertLessEqual(len(calls), maxEvals)
+        self.assertEqual(numEvals, len(calls))
+
+    @given(anyProblems())
+    def test_returns_last_evaluated_point(self, problem):
+        """
+        Given any of the test functions and an evaluation limit,
+        when solveBoundedSecant searches for a root,
+        then it returns the last point it evaluated and the value there, and reports convergence exactly when that
+        value is within the tolerance of zero.
+        """
+        lower, upper, x0, step, func, maxEvals = problem
+        recordedFunc, calls = recordCalls(func)
+        x, fx, isConverged, _ = solveBoundedSecant(recordedFunc, x0, step, lower, upper, TEST_F_TOL, maxEvals)
+        self.assertEqual((x, fx), calls[-1])
+        self.assertEqual(isConverged, abs(fx) <= TEST_F_TOL)
+
+    def test_second_point_is_below_first_when_above_upper_bound(self):
+        """Assert that solveBoundedSecant takes its second point a step below the first when a step above it would be
+        above the upper bound.
+        """
+        line = functools.partial(evaluateMonotonicCubic, root=0.0, slope=EXAMPLE_SLOPE, cubicCoeff=0.0)
+        recordedFunc, calls = recordCalls(line)
+        solveBoundedSecant(
+            recordedFunc, EXAMPLE_X0_NEAR_UPPER, EXAMPLE_STEP, EXAMPLE_LOWER, EXAMPLE_UPPER, TEST_F_TOL, TEST_MAX_EVALS
+        )
+        self.assertEqual(calls[1][0], EXAMPLE_X0_NEAR_UPPER - EXAMPLE_STEP)
+
+    def test_stops_on_landing_on_same_bound_twice(self):
+        """
+        Given a line whose root is above the upper bound, and a start at zero,
+        when solveBoundedSecant's first secant update is clipped to the upper bound and the next one lands there again,
+        then it stops without converging and without evaluating the upper bound a second time.
+        """
+        line = functools.partial(
+            evaluateMonotonicCubic, root=EXAMPLE_ROOT_ABOVE_UPPER, slope=EXAMPLE_SLOPE, cubicCoeff=0.0
+        )
+        recordedFunc, calls = recordCalls(line)
+        x, _, isConverged, numEvals = solveBoundedSecant(
+            recordedFunc, 0.0, EXAMPLE_STEP, EXAMPLE_LOWER, EXAMPLE_UPPER, TEST_F_TOL, TEST_MAX_EVALS
+        )
+        self.assertEqual([callX for callX, _ in calls], [0.0, EXAMPLE_STEP, EXAMPLE_UPPER])
+        self.assertFalse(isConverged)
+        self.assertEqual(x, EXAMPLE_UPPER)
+        self.assertEqual(numEvals, len(calls))
+
+    def test_recovers_after_update_clipped_to_bound(self):
+        """
+        Given an exponential whose root is just below the upper bound, and a start at the lower bound,
+        when solveBoundedSecant's first secant update overshoots the upper bound and is clipped to it,
+        then the later updates come back between the bounds and converge there.
+        """
+        recordedFunc, calls = recordCalls(functools.partial(evaluateExponential, root=EXAMPLE_EXP_ROOT))
+        x, _, isConverged, _ = solveBoundedSecant(
+            recordedFunc,
+            EXAMPLE_EXP_LOWER,
+            EXAMPLE_STEP,
+            EXAMPLE_EXP_LOWER,
+            EXAMPLE_EXP_UPPER,
+            TEST_F_TOL,
+            TEST_MAX_EVALS,
+        )
+        self.assertEqual(calls[2][0], EXAMPLE_EXP_UPPER)
+        self.assertTrue(isConverged)
+        self.assertTrue(EXAMPLE_EXP_LOWER < x < EXAMPLE_EXP_UPPER)
 
 
 if __name__ == "__main__":
