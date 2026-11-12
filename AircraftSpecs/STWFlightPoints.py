@@ -29,6 +29,21 @@ CRUISE_CG_FRACTION = 0.5
 FORWARD_CG_FRACTION = 0.0
 
 # ==============================================================================
+# Initial tail rotations in degrees, only used in runs with the horizontal tail
+# ==============================================================================
+# These are estimates of the trimmed rotations on the baseline geometry, to start runs with the tail close to trim
+# From the trimmed rigid ADflow polar, interpolated to the cruise angle of attack
+CRUISE_TAIL_ROTATION = -3.1
+# From the trimmed VLM analysis of the sea level pull-up, also used for the high speed pull-up
+PULL_UP_TAIL_ROTATION = -10.0
+# A guess: no push-down has been trimmed with the tail
+PUSH_DOWN_TAIL_ROTATION = 1.5
+# Linear estimate from the untrimmed pitching moment of the high lift buffet point and its derivatives
+BUFFET_HIGH_LIFT_TAIL_ROTATION = -7.5
+# A guess: slightly more than cruise, because of the forward CG
+BUFFET_HIGH_SPEED_TAIL_ROTATION = -4.0
+
+# ==============================================================================
 # Cruise conditions
 # ==============================================================================
 # Standard cruise condition taken from https://en.wikipedia.org/wiki/Boeing_717#Specifications
@@ -42,6 +57,7 @@ standardCruise = FlightPoint(
     altitude=CRUISE_ALTITUDE,
     alpha=3.25,
     CGFraction=CRUISE_CG_FRACTION,
+    tailRotation=CRUISE_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -68,6 +84,7 @@ buffetHighLift = FlightPoint(
     altitude=MAX_ALTITUDE,
     alpha=6.5,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=BUFFET_HIGH_LIFT_TAIL_ROTATION,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
 )
 buffetHighSpeed = FlightPoint(
@@ -79,6 +96,7 @@ buffetHighSpeed = FlightPoint(
     altitude=MAX_ALTITUDE,
     alpha=4.25,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=BUFFET_HIGH_SPEED_TAIL_ROTATION,
     evalFuncs=["lift", "sepsensor", "sepsensorksarea"],
 )
 
@@ -102,6 +120,7 @@ seaLevelLowSpeedPullUp = FlightPoint(
     altitude=MANEUVER_ALTITUDE,
     alpha=8.7,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=PULL_UP_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
     canUseVLM=True,
 )
@@ -115,6 +134,7 @@ seaLevelLowSpeedPushDown = FlightPoint(
     altitude=MANEUVER_ALTITUDE,
     alpha=-5.8,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=PUSH_DOWN_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
     canUseVLM=True,
 )
@@ -139,6 +159,7 @@ highAltHighSpeedPullUp = FlightPoint(
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=5.0,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=PULL_UP_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
@@ -151,6 +172,7 @@ highAltHighSpeedPushDown = FlightPoint(
     altitude=HIGH_SPEED_MANEUVER_ALTITUDE,
     alpha=-5.8,
     CGFraction=FORWARD_CG_FRACTION,
+    tailRotation=PUSH_DOWN_TAIL_ROTATION,
     evalFuncs=["lift", "drag", "cl", "cd"],
 )
 
