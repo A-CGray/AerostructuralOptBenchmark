@@ -125,7 +125,10 @@ def getADflowOptions(meshFile: str, outputDir: str, aerostructural: Optional[boo
         "forcesAsTractions": False,  # Because we're using MELD not RLT
         # Overset parameters, which have no effect on non-overset meshes
         "useZipperMesh": False,  # No wall surfaces overlap
-        "oversetUpdateMode": "frozen",  # IDWarp warps the whole mesh together, so the connectivity stays valid
+        # The overset connectivity is computed once, on the initial mesh, and reused as the mesh warps. The error this
+        # causes grows with the tail rotation: against updating the connectivity at every warp ("full"), cruise cl
+        # differs by 4e-6 relative with the tail at 0 degrees and by 1.5e-4 at -15 degrees (L3 mesh)
+        "oversetUpdateMode": "frozen",
         # Separation sensor options
         # Old sepsensor formulation
         "sepSensorOffset": -0.1,
