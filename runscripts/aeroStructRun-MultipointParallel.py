@@ -1979,7 +1979,7 @@ def addConstraints(ctx: RunContext, flightPointProb: om.Problem, performanceProb
                         cache_linear_solution=True,
                     )
 
-                if ctx.args.addPlanformCons and (ctx.args.span or ctx.args.taper or ctx.args.sweep):
+                if ctx.args.addPlanformCons and (ctx.args.span or ctx.args.taper or ctx.args.sweep or ctx.args.xShift):
                     # This constraint should only be applied if the optimiser has control over the wing planform
                     # The centre wingbox TE spar location constraint is already handled by DVCon, here we just need to constrain that, at the landing gear spanwise coordinate:
                     # - TE chordwise coordinate must be at least it's initial value
